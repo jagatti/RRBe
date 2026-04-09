@@ -1,0 +1,1321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RRBe – Race &amp; Rhythm Beat</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: 'Courier New', monospace;
+  }
+  canvas {
+    display: block;
+    image-rendering: pixelated;
+    cursor: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// =============================================
+// CONSTANTS
+// =============================================
+const W = 900, H = 600;
+const NUM_LANES = 5;
+const BPM = 128;
+const BEAT_S = 60 / BPM;          // ~0.4688 s
+const STEP_S = BEAT_S / 4;         // 16th note ~0.1172 s
+const VANISH_X = 450;
+const VANISH_Y = 110;
+const PLAYER_Y_SCR = 510;
+const ROAD_L = 50;
+const ROAD_R = 850;
+const ROAD_CX = (ROAD_L + ROAD_R) / 2;   // 450
+const ROAD_HW = (ROAD_R - ROAD_L) / 2;   // 400
+const UNIT_H = 90; // pixels per world height unit at z=1
+const LANE_TRANSITION_SPEED = 8.0; // lane units per second
+const GRAVITY = -2.5;
+const JUMP_VY = 0.9;
+const CROUCH_DURATION = 0.5;
+const MAX_PARTICLES = 200;
+
+// =============================================
+// CANVAS SETUP
+// =============================================
+const canvas = document.getElementById('c');
+canvas.width = W;
+canvas.height = H;
+const ctx = canvas.getContext('2d');
+
+// =============================================
+// AUDIO ENGINE
+// =============================================
+let audioCtx = null;
+let masterGain = null;
+let nextStepTime = 0;
+let stepCount = 0;
+let beatCount = 0;
+let audioStarted = false;
+
+// Bass note frequencies (8th note pattern, cycle of 8)
+const BASS_NOTES = [55, 55, 73.4, 55, 65.4, 55, 73.4, 82.4];
+
+// Pentatonic scale for synth melody (in Hz, A minor pentatonic ≈ A3..A5)
+const PENTA = [220, 261.63, 293.66, 329.63, 392, 440, 523.25, 587.33, 659.25, 783.99];
+
+// 8-bar synth melody (32 notes, one per half-beat)
+const MELODY = [
+  0,  -1, 2,   4,
+  5,  -1, 4,   2,
+  0,  -1, 2,   4,
+  7,  5,  4,   2,
+  0,  -1, 2,   5,
+  7,  -1, 9,   7,
+  5,  4,  2,   0,
+  2,  -1, -1,  4
+];
+let melodyPos = 0;
+
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0.45;
+  masterGain.connect(audioCtx.destination);
+  nextStepTime = audioCtx.currentTime + 0.1;
+  stepCount = 0;
+  beatCount = 0;
+  melodyPos = 0;
+  audioStarted = true;
+}
+
+function resumeAudio() {
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playKick(time) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(masterGain);
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(180, time);
+  osc.frequency.exponentialRampToValueAtTime(40, time + 0.08);
+  gain.gain.setValueAtTime(1.0, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
+  osc.start(time);
+  osc.stop(time + 0.3);
+}
+
+function playSnare(time) {
+  const bufferSize = Math.floor(audioCtx.sampleRate * 0.12);
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'highpass';
+  filter.frequency.value = 1200;
+  const gain = audioCtx.createGain();
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(masterGain);
+  gain.gain.setValueAtTime(0.7, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+  noise.start(time);
+  noise.stop(time + 0.15);
+}
+
+function playHihat(time, open = false) {
+  const bufferSize = Math.floor(audioCtx.sampleRate * 0.06);
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'highpass';
+  filter.frequency.value = 7000;
+  const gain = audioCtx.createGain();
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(masterGain);
+  const dur = open ? 0.12 : 0.04;
+  gain.gain.setValueAtTime(0.25, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  noise.start(time);
+  noise.stop(time + dur);
+}
+
+function playBass(time, freq, dur = 0.22) {
+  const osc = audioCtx.createOscillator();
+  const filter = audioCtx.createBiquadFilter();
+  const gain = audioCtx.createGain();
+  osc.type = 'sawtooth';
+  filter.type = 'lowpass';
+  filter.frequency.value = 400;
+  osc.connect(filter);
+  filter.connect(gain);
+  gain.connect(masterGain);
+  osc.frequency.setValueAtTime(freq, time);
+  gain.gain.setValueAtTime(0.5, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  osc.start(time);
+  osc.stop(time + dur);
+}
+
+function playSynth(time, freq, dur) {
+  const osc = audioCtx.createOscillator();
+  const osc2 = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'square';
+  osc2.type = 'square';
+  osc.frequency.setValueAtTime(freq, time);
+  osc2.frequency.setValueAtTime(freq * 1.006, time);
+  osc.connect(gain);
+  osc2.connect(gain);
+  gain.connect(masterGain);
+  gain.gain.setValueAtTime(0.12, time);
+  gain.gain.setValueAtTime(0.12, time + dur * 0.75);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  osc.start(time);
+  osc2.start(time);
+  osc.stop(time + dur);
+  osc2.stop(time + dur);
+}
+
+function playSFX_hit(time) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(masterGain);
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(200, time);
+  osc.frequency.exponentialRampToValueAtTime(60, time + 0.25);
+  gain.gain.setValueAtTime(0.6, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.25);
+  osc.start(time);
+  osc.stop(time + 0.25);
+}
+
+function playSFX_score(time) {
+  const freqs = [523.25, 659.25, 783.99];
+  freqs.forEach((f, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(masterGain);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(f, time + i * 0.06);
+    gain.gain.setValueAtTime(0.25, time + i * 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + i * 0.06 + 0.15);
+    osc.start(time + i * 0.06);
+    osc.stop(time + i * 0.06 + 0.15);
+  });
+}
+
+// Beat pattern arrays (16 steps per bar)
+const KICK_STEPS   = new Set([0, 4, 8, 12]);
+const SNARE_STEPS  = new Set([4, 12]);
+const OHIHAT_STEPS = new Set([6, 14]);
+// Bass plays on even steps (0,2,4,...14)
+const BASS_STEPS   = new Set([0, 2, 4, 6, 8, 10, 12, 14]);
+// Synth plays on steps 0,4,8,12 (quarter note = melody note per beat)
+const SYNTH_STEPS  = new Set([0, 4, 8, 12]);
+
+let bassNoteIdx = 0;
+
+function scheduleAudio() {
+  if (!audioCtx || gameState !== 'PLAYING') return;
+  const lookahead = 0.1; // seconds ahead
+  while (nextStepTime < audioCtx.currentTime + lookahead) {
+    const step = stepCount % 16;
+    const t = nextStepTime;
+    if (KICK_STEPS.has(step))   playKick(t);
+    if (SNARE_STEPS.has(step))  playSnare(t);
+    if (OHIHAT_STEPS.has(step)) playHihat(t, true);
+    else                         playHihat(t, false);
+    if (BASS_STEPS.has(step)) {
+      const bIdx = (stepCount / 2) % BASS_NOTES.length | 0;
+      playBass(t, BASS_NOTES[bIdx]);
+    }
+    if (SYNTH_STEPS.has(step)) {
+      const noteIdx = MELODY[melodyPos % MELODY.length];
+      if (noteIdx >= 0) {
+        playSynth(t, PENTA[noteIdx % PENTA.length], BEAT_S * 0.85);
+      }
+      melodyPos++;
+    }
+    if (step === 0) {
+      beatCount++;
+      beatFlash = 1.0;
+    }
+    stepCount++;
+    nextStepTime += STEP_S;
+  }
+}
+
+// =============================================
+// GAME STATE
+// =============================================
+let gameState = 'START';
+let score = 0;
+let combo = 0;
+let maxCombo = 0;
+let lives = 3;
+let gameSpeed = 0.45;
+let distance = 0;
+let beatFlash = 0;
+let dt = 0;
+let lastTime = 0;
+let titlePulse = 0;
+let startFlash = 0;
+
+let obstacles = [];
+let particles = [];
+
+// Obstacle spawn timing
+let nextSpawnBeat = 2;   // beat index when next obstacle spawns
+let spawnSchedule = [];  // pre-scheduled obstacle events
+
+// Player state
+let player = {
+  lane: 2,
+  displayLane: 2.0,
+  laneT: 1.0,
+  prevLane: 2,
+  y: 0,
+  vy: 0,
+  state: 'NORMAL',
+  crouchTimer: 0,
+  invincible: 0
+};
+
+// Input
+const keys = {};
+const justPressed = {};
+
+// =============================================
+// PERSPECTIVE MATH
+// =============================================
+function wToS(wx, wy, wz) {
+  // wz: 0=far, 1=near player; wy: 0=road surface, positive=up
+  const sx = ROAD_CX + wx * ROAD_HW * 2 * wz;
+  const sy = VANISH_Y + (PLAYER_Y_SCR - VANISH_Y) * wz - wy * UNIT_H * wz;
+  return { x: sx, y: sy };
+}
+
+function laneWX(lane) {
+  return -0.5 + (lane + 0.5) / NUM_LANES;
+}
+
+// Half width of a lane in world units
+const LANE_WW = 1.0 / NUM_LANES; // 0.2
+
+// =============================================
+// PARTICLE SYSTEM
+// =============================================
+function spawnParticles(wx, wy, wz, color, count = 12) {
+  for (let i = 0; i < count && particles.length < MAX_PARTICLES; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 0.3 + Math.random() * 0.5;
+    particles.push({
+      wx, wy, wz,
+      vx: Math.cos(angle) * speed * 0.05,
+      vy: Math.sin(angle) * speed * 0.5 + 0.2,
+      vz: 0,
+      life: 0.6 + Math.random() * 0.4,
+      maxLife: 1.0,
+      color,
+      size: 3 + Math.random() * 4
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.wx += p.vx * dt;
+    p.wy += p.vy * dt;
+    p.vy -= 1.5 * dt; // gravity on particles
+    p.wz += gameSpeed * dt; // particles move with scene
+    p.life -= dt;
+    if (p.life <= 0 || p.wz > 1.1) {
+      particles.splice(i, 1);
+    }
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    if (p.wz <= 0.01) continue;
+    const s = wToS(p.wx, p.wy, p.wz);
+    const alpha = Math.max(0, p.life / p.maxLife);
+    const size = p.size * p.wz;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// =============================================
+// OBSTACLE SYSTEM
+// =============================================
+const OBS_COLORS = {
+  LOW:      { main: '#ff4422', glow: '#ff6600' },
+  HIGH:     { main: '#ff22cc', glow: '#cc00ff' },
+  PLATFORM: { main: '#00ffcc', glow: '#00ff88' }
+};
+
+const OBS_HEIGHT = {
+  LOW:      0.4,
+  HIGH:     1.2,
+  PLATFORM: 0.15   // thickness of platform box
+};
+
+const OBS_Y = {
+  LOW:      0,    // sits on road
+  HIGH:     0,    // sits on road, but very tall
+  PLATFORM: 0.5   // elevated platform (floor at y=0.5)
+};
+
+function scheduleObstacles() {
+  // Build a queue of obstacles to spawn over the next few beats
+  const baseBeat = beatCount;
+  for (let i = 0; i < 8; i++) {
+    const beat = baseBeat + i;
+    if (beat < nextSpawnBeat) continue;
+    // Difficulty ramp
+    const chance = Math.min(0.7, 0.35 + distance * 0.0003);
+    if (Math.random() < chance) {
+      // Pick lane(s) – ensure at least one safe lane exists
+      const numBlocked = Math.random() < 0.25 ? 2 : 1;
+      const lanes = shuffledLanes().slice(0, numBlocked);
+      for (const lane of lanes) {
+        const type = randomObsType();
+        spawnSchedule.push({ beat, lane, type });
+      }
+      nextSpawnBeat = beat + 1 + (Math.random() < 0.4 ? 0 : 1);
+    } else {
+      nextSpawnBeat = beat + 1;
+    }
+  }
+}
+
+function shuffledLanes() {
+  const arr = [0, 1, 2, 3, 4];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function randomObsType() {
+  const r = Math.random();
+  if (r < 0.40) return 'LOW';
+  if (r < 0.75) return 'HIGH';
+  return 'PLATFORM';
+}
+
+function trySpawnFromSchedule() {
+  // Each beat, spawn any scheduled obstacles for this beat
+  for (let i = spawnSchedule.length - 1; i >= 0; i--) {
+    const evt = spawnSchedule[i];
+    if (evt.beat <= beatCount) {
+      spawnObstacle(evt.lane, evt.type);
+      spawnSchedule.splice(i, 1);
+    }
+  }
+}
+
+function spawnObstacle(lane, type) {
+  // z=0 is the vanishing point; obstacles spawn there and move toward z=1
+  obstacles.push({
+    lane,
+    z: 0.02,
+    type,
+    processed: false,
+    hit: false
+  });
+}
+
+function updateObstacles(dt) {
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const o = obstacles[i];
+    o.z += gameSpeed * dt;
+    // Check collision zone
+    if (!o.processed && o.z >= 0.92 && o.z <= 1.08) {
+      o.processed = true;
+      checkCollision(o);
+    }
+    if (o.z > 1.15) {
+      // Passed without collision – score if not hit
+      if (!o.hit) {
+        score += 10;
+        combo++;
+        if (combo > maxCombo) maxCombo = combo;
+        // Small score particles at player position
+        if (gameState === 'PLAYING') {
+          const pWx = laneWX(player.lane);
+          spawnParticles(pWx, 0.3, 0.98, '#00ffcc', 4);
+        }
+      }
+      obstacles.splice(i, 1);
+    }
+  }
+}
+
+function checkCollision(obs) {
+  // If player is invincible, no collision
+  if (player.invincible > 0) return;
+
+  const playerLane = player.lane;
+  if (obs.lane !== playerLane) {
+    // Different lane, always safe – award points for weaving
+    score += 15;
+    combo++;
+    if (combo > maxCombo) maxCombo = combo;
+    if (audioCtx) playSFX_score(audioCtx.currentTime);
+    spawnParticles(laneWX(obs.lane), 0.3, 0.98, '#00ffcc', 6);
+    return;
+  }
+
+  // Same lane – check if player avoids obstacle
+  let safe = false;
+  if (obs.type === 'LOW') {
+    // Safe if crouching OR jumping high
+    safe = (player.state === 'CROUCHING') || (player.y > 0.55);
+    if (safe && player.state === 'CROUCHING') {
+      score += 20;
+      combo++;
+      if (combo > maxCombo) maxCombo = combo;
+      if (audioCtx) playSFX_score(audioCtx.currentTime);
+      spawnParticles(laneWX(obs.lane), 0.2, 0.98, '#ffaa00', 6);
+    }
+  } else if (obs.type === 'HIGH') {
+    // Safe if jumping high enough
+    safe = player.y > 0.5;
+    if (safe) {
+      score += 25;
+      combo++;
+      if (combo > maxCombo) maxCombo = combo;
+      if (audioCtx) playSFX_score(audioCtx.currentTime);
+      spawnParticles(laneWX(obs.lane), 0.8, 0.98, '#ff44ff', 6);
+    }
+  } else if (obs.type === 'PLATFORM') {
+    // Safe if jumping (any height)
+    safe = player.state === 'JUMPING' || player.y > 0.2;
+    if (safe) {
+      score += 30;
+      combo++;
+      if (combo > maxCombo) maxCombo = combo;
+      if (audioCtx) playSFX_score(audioCtx.currentTime);
+      spawnParticles(laneWX(obs.lane), 0.5, 0.98, '#00ffcc', 8);
+    }
+  }
+
+  if (!safe) {
+    obs.hit = true;
+    hitPlayer(obs);
+  }
+}
+
+function hitPlayer(obs) {
+  lives--;
+  combo = 0;
+  player.invincible = 2.0; // 2 seconds invincibility
+  if (audioCtx) playSFX_hit(audioCtx.currentTime);
+  // Big red burst
+  spawnParticles(laneWX(obs.lane), 0.3, 0.98, '#ff2200', 20);
+  if (lives <= 0) {
+    gameState = 'GAMEOVER';
+    startFlash = 1.0;
+  }
+}
+
+// =============================================
+// PLAYER LOGIC
+// =============================================
+function updatePlayer(dt) {
+  // Lane transition
+  if (player.laneT < 1.0) {
+    player.laneT = Math.min(1.0, player.laneT + dt * LANE_TRANSITION_SPEED);
+    player.displayLane = player.prevLane + (player.lane - player.prevLane) * easeOutCubic(player.laneT);
+  } else {
+    player.displayLane = player.lane;
+  }
+
+  // Jump physics
+  if (player.state === 'JUMPING') {
+    player.y += player.vy * dt;
+    player.vy += GRAVITY * dt;
+    if (player.y <= 0) {
+      player.y = 0;
+      player.vy = 0;
+      player.state = 'NORMAL';
+    }
+  }
+
+  // Crouch timer
+  if (player.state === 'CROUCHING') {
+    player.crouchTimer -= dt;
+    if (player.crouchTimer <= 0) {
+      player.crouchTimer = 0;
+      player.state = 'NORMAL';
+    }
+  }
+
+  // Invincibility countdown
+  if (player.invincible > 0) {
+    player.invincible -= dt;
+    if (player.invincible < 0) player.invincible = 0;
+  }
+
+  // Input handling
+  if (justPressed['ArrowLeft'] || justPressed['KeyA']) {
+    if (player.lane > 0) moveLane(-1);
+  }
+  if (justPressed['ArrowRight'] || justPressed['KeyD']) {
+    if (player.lane < NUM_LANES - 1) moveLane(1);
+  }
+  if (justPressed['ArrowUp'] || justPressed['KeyW']) {
+    if (player.state !== 'JUMPING') {
+      player.state = 'JUMPING';
+      player.y = 0.01;
+      player.vy = JUMP_VY;
+    }
+  }
+  if (justPressed['ArrowDown'] || justPressed['KeyS']) {
+    if (player.state !== 'JUMPING') {
+      player.state = 'CROUCHING';
+      player.crouchTimer = CROUCH_DURATION;
+    }
+  }
+}
+
+function moveLane(dir) {
+  player.prevLane = player.displayLane;
+  player.lane = Math.max(0, Math.min(NUM_LANES - 1, player.lane + dir));
+  player.laneT = 0;
+}
+
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+// =============================================
+// MAIN UPDATE
+// =============================================
+let lastBeatCount = 0;
+
+function update(dt) {
+  if (gameState !== 'PLAYING') return;
+
+  distance += gameSpeed * dt * 100;
+  // Speed ramp
+  gameSpeed = 0.45 + distance * 0.00012;
+  gameSpeed = Math.min(gameSpeed, 1.2);
+
+  beatFlash = Math.max(0, beatFlash - dt * (1 / BEAT_S) * 1.5);
+  titlePulse += dt * 2;
+
+  updatePlayer(dt);
+  updateObstacles(dt);
+  updateParticles(dt);
+
+  // Audio scheduling
+  scheduleAudio();
+
+  // Obstacle scheduling on new beat
+  if (beatCount > lastBeatCount) {
+    lastBeatCount = beatCount;
+    scheduleObstacles();
+    trySpawnFromSchedule();
+  }
+  // Also try each frame in case beats were missed
+  trySpawnFromSchedule();
+}
+
+// =============================================
+// RENDERING
+// =============================================
+
+// Pre-compute some geometry
+function drawBackground() {
+  // Sky gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, VANISH_Y + 60);
+  grad.addColorStop(0, '#0a0015');
+  grad.addColorStop(1, '#001a2c');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  ctx.save();
+  const seed = 42;
+  for (let i = 0; i < 120; i++) {
+    const sx = pseudoRand(i * 3 + seed) * W;
+    const sy = pseudoRand(i * 3 + seed + 1) * (VANISH_Y + 30);
+    const sr = pseudoRand(i * 3 + seed + 2) * 1.5;
+    const alpha = 0.3 + pseudoRand(i + seed + 77) * 0.7;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Ground gradient below vanishing point
+  const groundGrad = ctx.createLinearGradient(0, VANISH_Y, 0, H);
+  groundGrad.addColorStop(0, '#050510');
+  groundGrad.addColorStop(1, '#020208');
+  ctx.fillStyle = groundGrad;
+  ctx.fillRect(0, VANISH_Y, W, H - VANISH_Y);
+}
+
+function pseudoRand(n) {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// Horizon line glow
+function drawHorizonGlow() {
+  const horizonY = VANISH_Y + 2;
+  const grad = ctx.createLinearGradient(0, horizonY - 20, 0, horizonY + 20);
+  grad.addColorStop(0,   'rgba(0,200,255,0)');
+  grad.addColorStop(0.5, 'rgba(0,200,255,0.25)');
+  grad.addColorStop(1,   'rgba(0,200,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, horizonY - 20, W, 40);
+}
+
+// Draw the pseudo-3D road with perspective grid
+let roadScrollT = 0;
+
+function drawRoad(dt_val) {
+  roadScrollT = (roadScrollT + gameSpeed * dt_val * 0.5) % 1.0;
+
+  // Road surface
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(VANISH_X, VANISH_Y);
+  ctx.lineTo(ROAD_L, H);
+  ctx.lineTo(ROAD_R, H);
+  ctx.closePath();
+
+  const roadGrad = ctx.createLinearGradient(ROAD_CX, VANISH_Y, ROAD_CX, H);
+  roadGrad.addColorStop(0, '#04060e');
+  roadGrad.addColorStop(1, '#080c18');
+  ctx.fillStyle = roadGrad;
+  ctx.fill();
+  ctx.restore();
+
+  // Perspective grid lines (horizontal stripes moving toward camera)
+  const NUM_STRIPES = 18;
+  ctx.save();
+  for (let i = 0; i < NUM_STRIPES; i++) {
+    // z goes from near 0 (far) to 1 (near)
+    let frac = (i + roadScrollT) / NUM_STRIPES;
+    const wz = Math.pow(frac, 2.2); // perspective spacing
+    if (wz <= 0.005) continue;
+
+    const leftPt  = wToS(-0.5, 0, wz);
+    const rightPt = wToS( 0.5, 0, wz);
+
+    const alpha = Math.min(1, wz * 1.5) * 0.35;
+    ctx.strokeStyle = `rgba(0,200,255,${alpha})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(leftPt.x, leftPt.y);
+    ctx.lineTo(rightPt.x, rightPt.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Lane dividers (converging lines from vanishing point to road edges at bottom)
+  ctx.save();
+  ctx.shadowBlur = 4;
+  ctx.shadowColor = '#003366';
+  for (let i = 1; i < NUM_LANES; i++) {
+    const wx = -0.5 + i / NUM_LANES;
+    const nearPt = wToS(wx, 0, 1.0);
+    ctx.strokeStyle = 'rgba(30,80,180,0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([8, 12]);
+    ctx.beginPath();
+    ctx.moveTo(VANISH_X, VANISH_Y);
+    ctx.lineTo(nearPt.x, nearPt.y);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  // Road edges (bright cyan)
+  ctx.save();
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = '#00ccff';
+  ctx.strokeStyle = '#00ccff';
+  ctx.lineWidth = 2;
+  // Left edge
+  const leftNear = wToS(-0.5, 0, 1.0);
+  ctx.beginPath();
+  ctx.moveTo(VANISH_X, VANISH_Y);
+  ctx.lineTo(leftNear.x, leftNear.y);
+  ctx.stroke();
+  // Right edge
+  const rightNear = wToS(0.5, 0, 1.0);
+  ctx.beginPath();
+  ctx.moveTo(VANISH_X, VANISH_Y);
+  ctx.lineTo(rightNear.x, rightNear.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawObstacle(obs) {
+  const col = OBS_COLORS[obs.type];
+  const h = OBS_HEIGHT[obs.type];
+  const baseY = OBS_Y[obs.type];
+  const wx = laneWX(obs.lane);
+  const hw = LANE_WW * 0.45; // half-width in world units
+
+  const z0 = obs.z - 0.04; // back face
+  const z1 = obs.z;         // front face
+
+  if (z0 <= 0.01) return; // behind vanishing point
+
+  // Compute 8 corners
+  const corners = {
+    // back face
+    bbl: wToS(wx - hw, baseY,     z0),
+    bbr: wToS(wx + hw, baseY,     z0),
+    btl: wToS(wx - hw, baseY + h, z0),
+    btr: wToS(wx + hw, baseY + h, z0),
+    // front face
+    fbl: wToS(wx - hw, baseY,     z1),
+    fbr: wToS(wx + hw, baseY,     z1),
+    ftl: wToS(wx - hw, baseY + h, z1),
+    ftr: wToS(wx + hw, baseY + h, z1),
+  };
+
+  ctx.save();
+  ctx.shadowBlur = 20;
+  ctx.shadowColor = col.glow;
+
+  // Top face
+  ctx.beginPath();
+  ctx.moveTo(corners.btl.x, corners.btl.y);
+  ctx.lineTo(corners.btr.x, corners.btr.y);
+  ctx.lineTo(corners.ftr.x, corners.ftr.y);
+  ctx.lineTo(corners.ftl.x, corners.ftl.y);
+  ctx.closePath();
+  const topGrad = ctx.createLinearGradient(corners.btl.x, corners.btl.y, corners.ftl.x, corners.ftl.y);
+  topGrad.addColorStop(0, hexAlpha(col.main, 0.5));
+  topGrad.addColorStop(1, hexAlpha(col.glow, 0.7));
+  ctx.fillStyle = topGrad;
+  ctx.fill();
+  ctx.strokeStyle = col.glow;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Front face
+  ctx.beginPath();
+  ctx.moveTo(corners.fbl.x, corners.fbl.y);
+  ctx.lineTo(corners.fbr.x, corners.fbr.y);
+  ctx.lineTo(corners.ftr.x, corners.ftr.y);
+  ctx.lineTo(corners.ftl.x, corners.ftl.y);
+  ctx.closePath();
+  const frontGrad = ctx.createLinearGradient(0, corners.fbl.y, 0, corners.ftl.y);
+  frontGrad.addColorStop(0, hexAlpha(col.main, 0.85));
+  frontGrad.addColorStop(1, hexAlpha(col.glow, 0.6));
+  ctx.fillStyle = frontGrad;
+  ctx.fill();
+  ctx.strokeStyle = col.glow;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Right side face
+  ctx.beginPath();
+  ctx.moveTo(corners.fbr.x, corners.fbr.y);
+  ctx.lineTo(corners.bbr.x, corners.bbr.y);
+  ctx.lineTo(corners.btr.x, corners.btr.y);
+  ctx.lineTo(corners.ftr.x, corners.ftr.y);
+  ctx.closePath();
+  ctx.fillStyle = hexAlpha(col.main, 0.45);
+  ctx.fill();
+  ctx.strokeStyle = col.main;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Left side face
+  ctx.beginPath();
+  ctx.moveTo(corners.fbl.x, corners.fbl.y);
+  ctx.lineTo(corners.bbl.x, corners.bbl.y);
+  ctx.lineTo(corners.btl.x, corners.btl.y);
+  ctx.lineTo(corners.ftl.x, corners.ftl.y);
+  ctx.closePath();
+  ctx.fillStyle = hexAlpha(col.main, 0.35);
+  ctx.fill();
+  ctx.strokeStyle = col.main;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Type label on front face
+  ctx.shadowBlur = 0;
+  const fcx = (corners.fbl.x + corners.fbr.x) / 2;
+  const fcy = (corners.fbl.y + corners.ftl.y) / 2;
+  const fscale = obs.z;
+  ctx.font = `bold ${Math.max(8, 12 * fscale)}px 'Courier New'`;
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const label = obs.type === 'LOW' ? '▼' : obs.type === 'HIGH' ? '▲' : '▬';
+  ctx.fillText(label, fcx, fcy);
+
+  ctx.restore();
+}
+
+function hexAlpha(hex, alpha) {
+  // Convert hex color to rgba
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function drawPlayer() {
+  const wx = laneWX(player.displayLane);
+  const wz = 1.0;
+
+  // Invincibility flicker
+  if (player.invincible > 0 && Math.floor(player.invincible * 8) % 2 === 0) return;
+
+  const yOffset = player.y;
+  const crouchScale = (player.state === 'CROUCHING') ? 0.45 : 1.0;
+
+  // Player is drawn at z=1 (player position)
+  const base = wToS(wx, yOffset, wz);
+  const top  = wToS(wx, yOffset + 0.55 * crouchScale, wz);
+
+  // Car body dimensions in screen pixels
+  const bodyW = 70;
+  const bodyH = Math.abs(base.y - top.y);
+  const cx = base.x;
+  const by = base.y;
+  const ty = top.y;
+
+  ctx.save();
+  ctx.shadowBlur = 22;
+  ctx.shadowColor = '#00ffcc';
+
+  // Main body (trapezoid shape: wider at bottom)
+  const topW = bodyW * 0.65;
+  ctx.beginPath();
+  ctx.moveTo(cx - bodyW/2, by);
+  ctx.lineTo(cx + bodyW/2, by);
+  ctx.lineTo(cx + topW/2,  ty + bodyH * 0.3);
+  ctx.lineTo(cx - topW/2,  ty + bodyH * 0.3);
+  ctx.closePath();
+  const bodyGrad = ctx.createLinearGradient(cx, by, cx, ty);
+  bodyGrad.addColorStop(0, '#0a1a2a');
+  bodyGrad.addColorStop(1, '#0d2233');
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+  ctx.strokeStyle = '#00ffcc';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Cab (top part)
+  const cabW = topW * 0.85;
+  const cabH = bodyH * 0.5;
+  ctx.beginPath();
+  ctx.moveTo(cx - topW/2,  ty + bodyH * 0.3);
+  ctx.lineTo(cx + topW/2,  ty + bodyH * 0.3);
+  ctx.lineTo(cx + cabW/2,  ty);
+  ctx.lineTo(cx - cabW/2,  ty);
+  ctx.closePath();
+  ctx.fillStyle = '#091520';
+  ctx.fill();
+  ctx.strokeStyle = '#00ccaa';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Windshield
+  ctx.beginPath();
+  ctx.moveTo(cx - cabW/2 + 5, ty + 3);
+  ctx.lineTo(cx + cabW/2 - 5, ty + 3);
+  ctx.lineTo(cx + topW/2 - 8, ty + bodyH * 0.28);
+  ctx.lineTo(cx - topW/2 + 8, ty + bodyH * 0.28);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(0,200,255,0.18)';
+  ctx.strokeStyle = 'rgba(0,200,255,0.5)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  // Side accent lines
+  ctx.strokeStyle = '#00ffaa';
+  ctx.lineWidth = 1.5;
+  ctx.shadowColor = '#00ff88';
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.moveTo(cx - bodyW/2 + 6, by - 4);
+  ctx.lineTo(cx - bodyW/2 + 6, ty + bodyH * 0.3 + 4);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx + bodyW/2 - 6, by - 4);
+  ctx.lineTo(cx + bodyW/2 - 6, ty + bodyH * 0.3 + 4);
+  ctx.stroke();
+
+  // Headlights
+  ctx.shadowColor = '#ffffaa';
+  ctx.shadowBlur = 15;
+  ctx.fillStyle = '#ffffdd';
+  const hlY = ty + bodyH * 0.35;
+  ctx.beginPath();
+  ctx.ellipse(cx - topW/2 + 8, hlY, 7, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(cx + topW/2 - 8, hlY, 7, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Headlight beams
+  ctx.globalAlpha = 0.12;
+  ctx.fillStyle = '#ffffaa';
+  ctx.beginPath();
+  ctx.moveTo(cx - topW/2 + 8, hlY);
+  ctx.lineTo(cx - topW/2 - 30, hlY - 20);
+  ctx.lineTo(cx - topW/2 - 15, hlY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(cx + topW/2 - 8, hlY);
+  ctx.lineTo(cx + topW/2 + 30, hlY - 20);
+  ctx.lineTo(cx + topW/2 + 15, hlY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Taillights (red)
+  ctx.shadowColor = '#ff2200';
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = '#ff4400';
+  ctx.beginPath();
+  ctx.ellipse(cx - bodyW/2 + 6, by - 6, 5, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(cx + bodyW/2 - 6, by - 6, 5, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Underbody glow
+  ctx.shadowBlur = 0;
+  const glowGrad = ctx.createRadialGradient(cx, by, 0, cx, by, bodyW * 0.7);
+  glowGrad.addColorStop(0, 'rgba(0,255,180,0.25)');
+  glowGrad.addColorStop(1, 'rgba(0,255,180,0)');
+  ctx.fillStyle = glowGrad;
+  ctx.beginPath();
+  ctx.ellipse(cx, by + 3, bodyW * 0.7, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawHUD() {
+  ctx.save();
+
+  // Beat flash overlay
+  if (beatFlash > 0) {
+    const beatAlpha = beatFlash * 0.12;
+    ctx.fillStyle = `rgba(0,220,255,${beatAlpha})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // Score
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = '#00ffcc';
+  ctx.fillStyle = '#00ffcc';
+  ctx.font = 'bold 28px "Courier New"';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillText(`${score}`, W - 20, 20);
+
+  ctx.font = '14px "Courier New"';
+  ctx.fillStyle = 'rgba(0,255,180,0.6)';
+  ctx.fillText('SCORE', W - 20, 52);
+
+  // Combo
+  if (combo > 1) {
+    ctx.shadowColor = '#ffee00';
+    ctx.fillStyle = '#ffee00';
+    ctx.font = `bold ${Math.min(24, 14 + combo)}px "Courier New"`;
+    ctx.textAlign = 'right';
+    ctx.fillText(`×${combo} COMBO`, W - 20, 72);
+  }
+
+  // Lives (heart icons)
+  ctx.textAlign = 'left';
+  ctx.font = 'bold 22px "Courier New"';
+  ctx.shadowColor = '#ff4488';
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = i < lives ? '#ff4488' : '#441122';
+    ctx.fillText('♥', 20 + i * 32, 20);
+  }
+
+  // Speed indicator
+  ctx.shadowBlur = 5;
+  ctx.shadowColor = '#8844ff';
+  ctx.fillStyle = '#8844ff';
+  ctx.font = '12px "Courier New"';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(`SPD ${gameSpeed.toFixed(2)}x`, 20, H - 20);
+
+  // BPM
+  ctx.fillStyle = 'rgba(100,200,255,0.6)';
+  ctx.fillText(`BPM ${BPM}`, 20, H - 36);
+
+  // Distance
+  ctx.fillText(`DST ${Math.floor(distance)}m`, 20, H - 52);
+
+  ctx.restore();
+}
+
+function drawStartScreen() {
+  titlePulse += 0.016 * 2;
+  const t = performance.now() / 1000;
+
+  // Title glow pulse
+  const pulse = 0.7 + 0.3 * Math.sin(t * 3);
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Title "RRBe"
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur = 30 * pulse;
+  ctx.font = 'bold 120px "Courier New"';
+  ctx.fillStyle = `rgba(0,255,200,${pulse})`;
+  ctx.fillText('RRBe', W / 2, H / 2 - 110);
+
+  // Subtitle
+  ctx.shadowColor = '#8844ff';
+  ctx.shadowBlur = 15;
+  ctx.font = 'bold 22px "Courier New"';
+  ctx.fillStyle = '#cc88ff';
+  ctx.fillText('RACE & RHYTHM BEAT', W / 2, H / 2 - 40);
+
+  // Controls
+  ctx.shadowBlur = 0;
+  ctx.font = '14px "Courier New"';
+  ctx.fillStyle = 'rgba(150,220,255,0.8)';
+  const controls = [
+    '← → : Change Lane',
+    '↑ : Jump (clear HIGH obstacles)',
+    '↓ : Crouch (pass LOW obstacles)',
+    'Avoid obstacles, ride the beat!'
+  ];
+  controls.forEach((line, i) => {
+    ctx.fillText(line, W / 2, H / 2 + 20 + i * 26);
+  });
+
+  // Press space pulsing
+  const spacePulse = 0.5 + 0.5 * Math.sin(t * 4);
+  ctx.shadowColor = '#ffee00';
+  ctx.shadowBlur = 12 * spacePulse;
+  ctx.fillStyle = `rgba(255,238,0,${spacePulse})`;
+  ctx.font = 'bold 20px "Courier New"';
+  ctx.fillText('PRESS SPACE TO START', W / 2, H / 2 + 145);
+
+  ctx.restore();
+}
+
+function drawGameOverScreen() {
+  const t = performance.now() / 1000;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Semi-dark overlay
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0, 0, W, H);
+
+  // GAME OVER
+  const goPulse = 0.8 + 0.2 * Math.sin(t * 2.5);
+  ctx.shadowColor = '#ff2244';
+  ctx.shadowBlur = 30 * goPulse;
+  ctx.fillStyle = `rgba(255,50,80,${goPulse})`;
+  ctx.font = 'bold 90px "Courier New"';
+  ctx.fillText('GAME OVER', W / 2, H / 2 - 90);
+
+  // Stats
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = '#00ffcc';
+  ctx.font = 'bold 28px "Courier New"';
+  ctx.fillText(`SCORE: ${score}`, W / 2, H / 2 + 10);
+
+  ctx.fillStyle = '#ffee00';
+  ctx.shadowColor = '#ffee00';
+  ctx.font = '22px "Courier New"';
+  ctx.fillText(`MAX COMBO: ×${maxCombo}`, W / 2, H / 2 + 48);
+
+  // Distance
+  ctx.fillStyle = '#8888ff';
+  ctx.shadowColor = '#8888ff';
+  ctx.font = '18px "Courier New"';
+  ctx.fillText(`DISTANCE: ${Math.floor(distance)}m`, W / 2, H / 2 + 82);
+
+  // Press R
+  const rPulse = 0.5 + 0.5 * Math.sin(t * 3.5);
+  ctx.shadowColor = '#ffee00';
+  ctx.shadowBlur = 12 * rPulse;
+  ctx.fillStyle = `rgba(255,238,0,${rPulse})`;
+  ctx.font = 'bold 18px "Courier New"';
+  ctx.fillText('PRESS R TO RESTART', W / 2, H / 2 + 130);
+
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawBackground();
+  drawHorizonGlow();
+
+  if (gameState === 'START') {
+    drawRoad(0.016);
+    drawStartScreen();
+    return;
+  }
+
+  drawRoad(dt);
+
+  // Draw obstacles sorted by z (far first)
+  const sorted = [...obstacles].sort((a, b) => a.z - b.z);
+  for (const obs of sorted) {
+    if (obs.z > 0.05 && obs.z < 1.12) drawObstacle(obs);
+  }
+
+  drawParticles();
+  drawPlayer();
+  drawHUD();
+
+  if (gameState === 'GAMEOVER') {
+    drawGameOverScreen();
+  }
+
+  // Start-flash for game over transition
+  if (startFlash > 0) {
+    ctx.fillStyle = `rgba(255,0,0,${startFlash * 0.5})`;
+    ctx.fillRect(0, 0, W, H);
+    startFlash = Math.max(0, startFlash - dt * 3);
+  }
+}
+
+// =============================================
+// GAME LOOP
+// =============================================
+function resetGame() {
+  gameState = 'PLAYING';
+  score = 0;
+  combo = 0;
+  lives = 3;
+  gameSpeed = 0.45;
+  distance = 0;
+  beatFlash = 0;
+  obstacles = [];
+  particles = [];
+  spawnSchedule = [];
+  nextSpawnBeat = 2;
+  lastBeatCount = 0;
+  player = {
+    lane: 2,
+    displayLane: 2.0,
+    laneT: 1.0,
+    prevLane: 2,
+    y: 0,
+    vy: 0,
+    state: 'NORMAL',
+    crouchTimer: 0,
+    invincible: 0
+  };
+  if (audioCtx) {
+    stepCount = 0;
+    beatCount = 0;
+    melodyPos = 0;
+    nextStepTime = audioCtx.currentTime + 0.05;
+    lastBeatCount = 0;
+  }
+}
+
+function gameLoop(ts) {
+  dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+
+  update(dt);
+  draw();
+
+  // Clear just-pressed
+  for (const k in justPressed) delete justPressed[k];
+
+  requestAnimationFrame(gameLoop);
+}
+
+// =============================================
+// INPUT
+// =============================================
+window.addEventListener('keydown', (e) => {
+  if (!keys[e.code]) {
+    justPressed[e.code] = true;
+  }
+  keys[e.code] = true;
+
+  if (e.code === 'Space' && gameState === 'START') {
+    e.preventDefault();
+    startGame();
+  }
+  if (e.code === 'KeyR' && gameState === 'GAMEOVER') {
+    resetGame();
+  }
+  // Prevent scrolling
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
+    e.preventDefault();
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  keys[e.code] = false;
+});
+
+// =============================================
+// START GAME
+// =============================================
+function startGame() {
+  initAudio();
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  resetGame();
+}
+
+// =============================================
+// ENTRY POINT
+// =============================================
+lastTime = performance.now();
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
