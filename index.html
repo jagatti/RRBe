@@ -16,17 +16,17 @@ canvas{display:block;cursor:none}
 // CONSTANTS
 // ============================================================
 const W = 960, H = 640;
-const BPM = 128;
+const BPM = 160;
 const BEAT_S = 60 / BPM;
 const STEP_S = BEAT_S / 4;
 const SONG_BARS = 48;
 const SONG_DURATION = SONG_BARS * 4 * BEAT_S;
 
-// Perspective
+// Perspective — lowered camera (higher VY) so road looks more head-on
 const VX = W / 2;           // vanishing point X
-const VY = 85;               // vanishing point Y
-const ROAD_BOTTOM = 550;     // road bottom edge (near player)
-const ROAD_HW = 340;         // half-width of road at bottom
+const VY = 180;              // vanishing point Y (lowered camera)
+const ROAD_BOTTOM = 560;     // road bottom edge (near player)
+const ROAD_HW = 360;         // half-width of road at bottom
 const PERSP_POW = 1.5;
 
 // Obstacle scroll
@@ -79,28 +79,26 @@ const JUDGE_COLORS = {
 };
 const JUDGE_SCORE = { PERFECT: 100, GREAT: 80, GOOD: 50, BAD: 20, MISS: 0 };
 
-// Health
-const HP_MAX = 100;
-const HP_CHANGE = { PERFECT: 1.0, GREAT: 0.5, GOOD: 0, BAD: -3, MISS: -5 };
-
 // Character action durations
 const ACTION_DUR = 0.35;
 
-// Audio
-const BASS_NOTES = [55, 55, 73.4, 55, 65.4, 55, 73.4, 82.4];
-const PENTA = [220, 261.63, 293.66, 329.63, 392, 440, 523.25, 587.33, 659.25, 783.99];
+// Audio — BPM 160 energetic track
+// Minor key bass line for more drive
+const BASS_NOTES = [82.4, 82.4, 110, 98, 73.4, 73.4, 98, 110, 82.4, 65.4, 73.4, 98, 110, 82.4, 65.4, 73.4];
+// Mixolydian / minor penta scale for melody
+const PENTA = [329.63, 369.99, 392, 440, 493.88, 523.25, 587.33, 659.25, 739.99, 783.99];
 const MELODY = [
-  0, -1, 2,  4,  5, -1, 4,  2,
-  0, -1, 2,  4,  7,  5, 4,  2,
-  0, -1, 2,  5,  7, -1, 9,  7,
-  5,  4, 2,  0,  2, -1, -1, 4
+  0, -1, 4,  2,  7, -1, 5,  3,
+  1, -1, 6,  4,  9,  7, 5,  3,
+  2, -1, 4,  7,  9, -1, 6,  4,
+  5,  3, 1,  0,  2, -1, 4,  7
 ];
 
 const KICK_STEPS   = new Set([0, 4, 8, 12]);
 const SNARE_STEPS  = new Set([4, 12]);
-const OHIHAT_STEPS = new Set([6, 14]);
+const OHIHAT_STEPS = new Set([2, 6, 10, 14]);
 const BASS_STEPS   = new Set([0, 2, 4, 6, 8, 10, 12, 14]);
-const SYNTH_STEPS  = new Set([0, 4, 8, 12]);
+const SYNTH_STEPS  = new Set([0, 2, 4, 8, 10, 12]);
 
 // ============================================================
 // CANVAS
@@ -234,7 +232,7 @@ function sfxMiss(t) {
 
 // Audio scheduler
 function scheduleAudio() {
-  if (!audioCtx || gameState !== 'PLAYING') return;
+  if (!audioCtx || (gameState !== 'PLAYING' && gameState !== 'READY_GO')) return;
   while (nextStepTime < audioCtx.currentTime + 0.1) {
     const step = stepCount % 16;
     const t = nextStepTime;
@@ -336,7 +334,6 @@ function generateChart() {
 let gameState = 'START';
 let obstacles = [];
 let score = 0, combo = 0, maxCombo = 0;
-let health = HP_MAX;
 let judgeCounts = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
 let accuracy = 100;
 let lastJudge = null, judgeTimer = 0;
@@ -345,6 +342,13 @@ let dt = 0, lastTime = 0;
 let particles = [];
 let roadScroll = 0;
 let charPhase = 0;
+
+// READY/GO animation state
+let readyGoTimer = 0;    // countdown timer for READY->GO
+const READY_GO_DUR = 2.5; // total duration: READY 1.5s, GO 1.0s
+
+// Goal line state
+let goalLineZ = -1;  // z position of the goal line (-1 = not visible)
 
 // Character action state
 let charAction = 'RUN';   // RUN, DODGE_L, DODGE_R, DUCK, JUMP
@@ -427,7 +431,7 @@ window.addEventListener('keydown', (e) => {
 
   if (gameState === 'START' && e.code === 'Space') {
     startGame();
-  } else if ((gameState === 'GAMEOVER' || gameState === 'RESULT') && (e.code === 'KeyR' || e.code === 'Space')) {
+  } else if (gameState === 'RESULT' && (e.code === 'KeyR' || e.code === 'Space')) {
     resetToStart();
   } else if (gameState === 'PLAYING') {
     if (justPressed[e.code] && ['ArrowLeft','ArrowRight','ArrowDown','ArrowUp'].includes(e.code)) {
@@ -485,7 +489,6 @@ function judgeKeyPress(keyCode) {
 
   const mult = Math.floor(combo / 10) + 1;
   score += JUDGE_SCORE[j] * mult;
-  health = Math.min(HP_MAX, Math.max(0, health + HP_CHANGE[j]));
 
   lastJudge = j;
   judgeTimer = 0.5;
@@ -517,7 +520,6 @@ function processAutoMisses() {
       o.judgment = 'MISS';
       judgeCounts.MISS++;
       combo = 0;
-      health = Math.max(0, health + HP_CHANGE.MISS);
       lastJudge = 'MISS';
       judgeTimer = 0.35;
       if (audioCtx) sfxMiss(audioCtx.currentTime);
@@ -537,6 +539,16 @@ function updateAccuracy() {
 // UPDATE
 // ============================================================
 function update(deltaT) {
+  if (gameState === 'READY_GO') {
+    readyGoTimer -= deltaT;
+    roadScroll = (roadScroll + deltaT * 3.0) % 1.0;
+    charPhase += deltaT * 12;
+    if (readyGoTimer <= 0) {
+      gameState = 'PLAYING';
+    }
+    return;
+  }
+
   if (gameState !== 'PLAYING') return;
 
   scheduleAudio();
@@ -550,7 +562,6 @@ function update(deltaT) {
   if (charActionTimer > 0) {
     charActionTimer -= deltaT;
     if (charAction === 'JUMP') {
-      // Parabolic jump: rises then falls
       const t = 1 - (charActionTimer / ACTION_DUR);
       charJumpY = Math.sin(t * Math.PI) * 55;
     }
@@ -566,14 +577,20 @@ function update(deltaT) {
   roadScroll = (roadScroll + deltaT * 3.0) % 1.0;
   charPhase += deltaT * 12;
 
-  if (health <= 0) {
-    gameState = 'GAMEOVER';
-    return;
+  const now = musicTime();
+
+  // Goal line: start showing when near the end of the song
+  const lastObsTime = obstacles.length > 0 ? obstacles[obstacles.length - 1].time : SONG_DURATION;
+  const goalAppearTime = lastObsTime - OBS_SCROLL_TIME * 0.5;
+  if (now >= goalAppearTime) {
+    // goalLineZ goes from 0 (horizon) to 1 (judgment line)
+    goalLineZ = Math.min(1.3, (now - goalAppearTime) / OBS_SCROLL_TIME);
+  } else {
+    goalLineZ = -1;
   }
 
-  const now = musicTime();
   const allDone = obstacles.length > 0 && obstacles.every(o => o.judged);
-  if (allDone && now > obstacles[obstacles.length - 1].time + 2.5) {
+  if (allDone && now > lastObsTime + 1.5) {
     gameState = 'RESULT';
   }
 }
@@ -587,7 +604,7 @@ function pseudoRand(n) {
 }
 
 function drawBg() {
-  const g = ctx.createLinearGradient(0, 0, 0, VY + 60);
+  const g = ctx.createLinearGradient(0, 0, 0, VY + 40);
   g.addColorStop(0, '#05000d');
   g.addColorStop(0.6, '#0a0020');
   g.addColorStop(1, '#001020');
@@ -598,7 +615,7 @@ function drawBg() {
   ctx.save();
   for (let i = 0; i < 100; i++) {
     const sx = pseudoRand(i * 3 + 42) * W;
-    const sy = pseudoRand(i * 3 + 43) * (VY + 20);
+    const sy = pseudoRand(i * 3 + 43) * (VY - 10);
     const sr = pseudoRand(i * 3 + 44) * 1.2 + 0.3;
     ctx.globalAlpha = 0.3 + pseudoRand(i + 99) * 0.5;
     ctx.fillStyle = '#fff';
@@ -615,13 +632,13 @@ function drawBg() {
   ctx.fillStyle = gg;
   ctx.fillRect(0, VY, W, H - VY);
 
-  // Horizon glow
-  const hg = ctx.createRadialGradient(VX, VY, 0, VX, VY, 250);
-  hg.addColorStop(0, 'rgba(60,120,200,0.25)');
-  hg.addColorStop(0.5, 'rgba(30,60,120,0.10)');
+  // Horizon glow (subtle, no blue lines)
+  const hg = ctx.createRadialGradient(VX, VY, 0, VX, VY, 200);
+  hg.addColorStop(0, 'rgba(60,120,200,0.15)');
+  hg.addColorStop(0.5, 'rgba(30,60,120,0.06)');
   hg.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = hg;
-  ctx.fillRect(0, VY - 60, W, 200);
+  ctx.fillRect(0, VY - 40, W, 120);
 }
 
 // ============================================================
@@ -715,21 +732,26 @@ function drawTrack() {
   ctx.setLineDash([]);
   ctx.restore();
 
-  // Road edges (neon, curved)
+  // Road edges (neon, curved — fade out near horizon to create clean horizon line)
   ctx.save();
-  ctx.shadowBlur = 12;
-  ctx.shadowColor = '#0088ff';
-  ctx.strokeStyle = '#0088ff';
-  ctx.lineWidth = 2;
   for (const side of [-1, 1]) {
     ctx.beginPath();
+    const FADE_START = 0.15; // start drawing edges from this z (avoid tip)
+    let started = false;
     for (let i = 0; i <= CURVE_STEPS; i++) {
       const z = i / CURVE_STEPS;
+      if (z < FADE_START) continue;
       const s = zToScreen(z);
       const x = roadEdgeX(z, side);
-      if (i === 0) ctx.moveTo(x, s.y);
+      if (!started) { ctx.moveTo(x, s.y); started = true; }
       else ctx.lineTo(x, s.y);
     }
+    // Fade alpha along the edge
+    const fadeAlpha = 0.8;
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = '#0088ff';
+    ctx.strokeStyle = `rgba(0,136,255,${fadeAlpha})`;
+    ctx.lineWidth = 2;
     ctx.stroke();
   }
   ctx.restore();
@@ -893,9 +915,9 @@ function drawObstacles() {
 }
 
 function drawPylon(x, y, scale, color, isLeft) {
-  // Traffic cone / pylon shape
-  const w = 18 * scale;
-  const h = 44 * scale;
+  // Traffic cone / pylon shape — enlarged for visibility
+  const w = 28 * scale;
+  const h = 70 * scale;
 
   ctx.save();
   ctx.shadowColor = color;
@@ -931,10 +953,10 @@ function drawPylon(x, y, scale, color, isLeft) {
 }
 
 function drawArch(x, y, scale, color) {
-  // Arch / gate shape - overhead obstacle
-  const w = 60 * scale;
-  const h = 55 * scale;
-  const postW = 8 * scale;
+  // Arch / gate shape - overhead obstacle — enlarged
+  const w = 90 * scale;
+  const h = 85 * scale;
+  const postW = 12 * scale;
 
   ctx.save();
   ctx.shadowColor = color;
@@ -966,9 +988,9 @@ function drawArch(x, y, scale, color) {
 }
 
 function drawBlock(x, y, scale, color) {
-  // Ground block - low obstacle to jump over
-  const w = 44 * scale;
-  const h = 24 * scale;
+  // Ground block - low obstacle to jump over — enlarged
+  const w = 70 * scale;
+  const h = 38 * scale;
 
   ctx.save();
   ctx.shadowColor = color;
@@ -1003,9 +1025,9 @@ function drawBlock(x, y, scale, color) {
 }
 
 function drawStar(x, y, scale, color, isLeft) {
-  // Yellow star collectible — draw a 5-pointed star
-  const r = 22 * scale;
-  const ir = 10 * scale;
+  // Yellow star collectible — enlarged
+  const r = 34 * scale;
+  const ir = 16 * scale;
 
   ctx.save();
   ctx.shadowColor = color;
@@ -1264,23 +1286,6 @@ function drawHUD() {
   });
   ctx.globalAlpha = 1;
 
-  // ---- Health bar (bottom) ----
-  const hbX = VX - 150, hbY = H - 20, hbW = 300, hbH = 8;
-  ctx.fillStyle = 'rgba(30,30,60,0.7)';
-  ctx.fillRect(hbX, hbY, hbW, hbH);
-  const hpFrac = health / HP_MAX;
-  const hpColor = hpFrac > 0.5 ? '#44ff88' : hpFrac > 0.25 ? '#ffcc00' : '#ff4444';
-  ctx.fillStyle = hpColor;
-  ctx.fillRect(hbX, hbY, hbW * hpFrac, hbH);
-  ctx.strokeStyle = 'rgba(100,150,200,0.4)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(hbX, hbY, hbW, hbH);
-
-  ctx.fillStyle = 'rgba(200,220,255,0.6)';
-  ctx.font = '10px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('LIFE', VX, H - 24);
-
   // ---- Controls hint (bottom corners) ----
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(100,200,255,0.4)';
@@ -1405,6 +1410,95 @@ function drawJudgePopup() {
 }
 
 // ============================================================
+// RENDERING: READY/GO Animation
+// ============================================================
+function drawReadyGo() {
+  if (gameState !== 'READY_GO') return;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const elapsed = READY_GO_DUR - readyGoTimer;
+
+  if (elapsed < 1.5) {
+    // READY phase
+    const t = elapsed / 1.5;
+    const scale = 1.0 + Math.sin(t * Math.PI) * 0.15;
+    const alpha = t < 0.2 ? t / 0.2 : (t > 0.85 ? (1 - t) / 0.15 : 1.0);
+
+    ctx.translate(VX, H / 2 - 40);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.shadowColor = '#00ccff';
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = '#00ddff';
+    ctx.font = "bold 90px 'Impact', sans-serif";
+    ctx.fillText('READY', 0, 0);
+  } else {
+    // GO phase
+    const t = (elapsed - 1.5) / 1.0;
+    const scale = 1.2 + t * 0.8;
+    const alpha = t < 0.3 ? t / 0.3 : Math.max(0, 1 - (t - 0.3) * 1.5);
+
+    ctx.translate(VX, H / 2 - 40);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.shadowColor = '#ffcc00';
+    ctx.shadowBlur = 40;
+    ctx.fillStyle = '#ffee00';
+    ctx.font = "bold 120px 'Impact', sans-serif";
+    ctx.fillText('GO!', 0, 0);
+  }
+
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: Goal Line
+// ============================================================
+function drawGoalLine() {
+  if (goalLineZ < 0 || goalLineZ > 1.5) return;
+
+  const z = Math.min(1.0, goalLineZ);
+  const s = zToScreen(z);
+  const y = s.y;
+  const lx = roadEdgeX(z, -1);
+  const rx = roadEdgeX(z, 1);
+
+  ctx.save();
+  const alpha = Math.min(1, z * 2);
+  ctx.globalAlpha = alpha;
+
+  // Checkered finish line
+  const lineH = 12 * Math.max(0.3, s.t);
+  const numChecks = 16;
+  const checkW = (rx - lx) / numChecks;
+  for (let i = 0; i < numChecks; i++) {
+    ctx.fillStyle = (i % 2 === 0) ? '#fff' : '#111';
+    ctx.fillRect(lx + i * checkW, y - lineH, checkW, lineH);
+  }
+  // Second row offset
+  for (let i = 0; i < numChecks; i++) {
+    ctx.fillStyle = (i % 2 === 1) ? '#fff' : '#111';
+    ctx.fillRect(lx + i * checkW, y, checkW, lineH);
+  }
+
+  // "GOAL" text above
+  if (z > 0.3) {
+    const textScale = Math.max(0.5, s.t);
+    ctx.shadowColor = '#ffcc00';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#ffee00';
+    ctx.font = `bold ${Math.round(36 * textScale)}px 'Impact', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('GOAL', VX, y - lineH - 5 * textScale);
+  }
+
+  ctx.restore();
+}
+
+// ============================================================
 // RENDERING: Screens
 // ============================================================
 function drawStartScreen() {
@@ -1473,48 +1567,6 @@ function drawStartScreen() {
   ctx.fillStyle = 'rgba(255,238,0,' + sp + ')';
   ctx.font = 'bold 20px sans-serif';
   ctx.fillText('PRESS SPACE TO START', VX, H / 2 + 230);
-
-  ctx.restore();
-}
-
-function drawGameOverScreen() {
-  const t = performance.now() / 1000;
-  ctx.save();
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.fillRect(0, 0, W, H);
-
-  const gp = 0.8 + 0.2 * Math.sin(t * 2.5);
-  ctx.shadowColor = '#ff2244';
-  ctx.shadowBlur = 30 * gp;
-  ctx.fillStyle = 'rgba(255,50,80,' + gp + ')';
-  ctx.font = "bold 80px 'Impact', sans-serif";
-  ctx.fillText('GAME OVER', VX, H / 2 - 60);
-
-  ctx.shadowBlur = 10;
-  ctx.shadowColor = '#00ccff';
-  ctx.fillStyle = '#00ddff';
-  ctx.font = 'bold 28px sans-serif';
-  ctx.fillText('SCORE: ' + score, VX, H / 2 + 10);
-
-  ctx.fillStyle = '#ffee44';
-  ctx.shadowColor = '#ffcc00';
-  ctx.font = '22px sans-serif';
-  ctx.fillText('MAX COMBO: ' + maxCombo, VX, H / 2 + 48);
-
-  ctx.fillStyle = '#aaa';
-  ctx.shadowBlur = 0;
-  ctx.font = '16px sans-serif';
-  ctx.fillText('Accuracy: ' + accuracy.toFixed(1) + '%', VX, H / 2 + 80);
-
-  const rp = 0.5 + 0.5 * Math.sin(t * 3.5);
-  ctx.shadowColor = '#ffee00';
-  ctx.shadowBlur = 10 * rp;
-  ctx.fillStyle = 'rgba(255,238,0,' + rp + ')';
-  ctx.font = 'bold 18px sans-serif';
-  ctx.fillText('PRESS R or SPACE TO RESTART', VX, H / 2 + 130);
 
   ctx.restore();
 }
@@ -1618,7 +1670,16 @@ function draw() {
     return;
   }
 
+  if (gameState === 'READY_GO') {
+    drawTrack();
+    drawJudgeZone();
+    drawCharacter();
+    drawReadyGo();
+    return;
+  }
+
   drawTrack();
+  drawGoalLine();
   drawObstacles();
   drawJudgeZone();
   drawCharacter();
@@ -1626,7 +1687,6 @@ function draw() {
   drawHUD();
   drawJudgePopup();
 
-  if (gameState === 'GAMEOVER') drawGameOverScreen();
   if (gameState === 'RESULT') drawResultScreen();
 }
 
@@ -1634,10 +1694,11 @@ function draw() {
 // GAME LIFECYCLE
 // ============================================================
 function resetGame() {
-  gameState = 'PLAYING';
+  gameState = 'READY_GO';
+  readyGoTimer = READY_GO_DUR;
+  goalLineZ = -1;
   obstacles = generateChart();
   score = 0; combo = 0; maxCombo = 0;
-  health = HP_MAX;
   judgeCounts = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
   accuracy = 100;
   lastJudge = null; judgeTimer = 0;
@@ -1649,8 +1710,8 @@ function resetGame() {
 
   if (audioCtx) {
     stepCount = 0; beatCount = 0; melodyPos = 0;
-    nextStepTime = audioCtx.currentTime + 0.05;
-    gameStartTime = audioCtx.currentTime;
+    nextStepTime = audioCtx.currentTime + READY_GO_DUR + 0.05;
+    gameStartTime = audioCtx.currentTime + READY_GO_DUR;
   }
 }
 
