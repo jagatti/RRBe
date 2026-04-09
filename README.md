@@ -135,7 +135,7 @@ simple half-note patterns to dense 16th-note sequences.
   projection
 - **Web Audio API**: Fully procedural drum machine + synth engine
 - **Vanilla JS**: Zero external libraries or CDN dependencies
-- **312 auto-generated obstacles** across 48 bars (90 seconds)
+- **~184 auto-generated obstacles** across 48 bars (90 seconds)
 - **Neon/Cyberpunk aesthetic**: Glow effects, particle bursts, beat flash
 - **Character animation**: Dodge left/right, duck, and jump reactions
 
