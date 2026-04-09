@@ -25,7 +25,7 @@ const SONG_BARS = 48;
 const SONG_DURATION = SONG_BARS * 4 * BEAT_S;
 
 // Perspective
-const VX = W / 2;        // vanishing point X (480)
+const VX = W / 2;        // vanishing point X
 const VY = 85;            // vanishing point Y
 const ROAD_BOTTOM = 570;  // road bottom edge
 const ROAD_HW = 340;      // half-width at bottom
@@ -83,7 +83,7 @@ const ctx = canvas.getContext('2d');
 // ============================================================
 let audioCtx = null, masterGain = null;
 let nextStepTime = 0, stepCount = 0, beatCount = 0;
-let melodyPos = 0, bassNoteIdx = 0;
+let melodyPos = 0;
 let audioStarted = false;
 let gameStartTime = 0;
 
@@ -94,7 +94,7 @@ function initAudio() {
   masterGain.gain.value = 0.40;
   masterGain.connect(audioCtx.destination);
   nextStepTime = audioCtx.currentTime + 0.1;
-  stepCount = 0; beatCount = 0; melodyPos = 0; bassNoteIdx = 0;
+  stepCount = 0; beatCount = 0; melodyPos = 0;
   audioStarted = true;
 }
 
@@ -212,7 +212,7 @@ function scheduleAudio() {
     if (OHIHAT_STEPS.has(step)) playHihat(t, true);
     else playHihat(t, false);
     if (BASS_STEPS.has(step)) {
-      playBass(t, BASS_NOTES[(stepCount / 2 | 0) % BASS_NOTES.length]);
+      playBass(t, BASS_NOTES[Math.floor(stepCount / 2) % BASS_NOTES.length]);
     }
     if (SYNTH_STEPS.has(step)) {
       const ni = MELODY[melodyPos % MELODY.length];
@@ -313,7 +313,6 @@ let dt = 0, lastTime = 0;
 let particles = [];
 let roadScroll = 0;
 let charPhase = 0;
-let totalNotes = 0;
 let laneFlash = [0, 0, 0, 0]; // per-lane flash when pressed
 
 // ============================================================
@@ -1337,7 +1336,6 @@ function draw() {
 function resetGame() {
   gameState = 'PLAYING';
   notes = generateChart();
-  totalNotes = notes.length;
   score = 0; combo = 0; maxCombo = 0;
   health = HP_MAX;
   judgeCounts = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
@@ -1349,7 +1347,7 @@ function resetGame() {
   laneFlash = [0, 0, 0, 0];
 
   if (audioCtx) {
-    stepCount = 0; beatCount = 0; melodyPos = 0; bassNoteIdx = 0;
+    stepCount = 0; beatCount = 0; melodyPos = 0;
     nextStepTime = audioCtx.currentTime + 0.05;
     gameStartTime = audioCtx.currentTime;
   }
