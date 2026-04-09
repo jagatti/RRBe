@@ -30,7 +30,7 @@ const ROAD_HW = 340;         // half-width of road at bottom
 const PERSP_POW = 1.5;
 
 // Obstacle scroll
-const OBS_SCROLL_TIME = 2.0; // seconds from spawn to judgment line
+const OBS_SCROLL_TIME = 1.2; // seconds from spawn to judgment line
 
 // Timing windows (seconds)
 const T_PERFECT = 0.045;
@@ -625,18 +625,43 @@ function drawBg() {
 }
 
 // ============================================================
-// RENDERING: Track (wide multi-lane road, R2BEAT style)
+// RENDERING: Track (curved road, sphere-surface style like R2BEAT)
 // ============================================================
+
+// Curved road edge X at a given z (0=horizon, 1=near).
+// Uses a power curve so edges bulge outward, giving a "running on a sphere" look.
+const ROAD_CURVE_POW = 0.55; // <1 = convex outward bulge
+function roadEdgeX(z, side) {
+  // side: -1 for left, +1 for right
+  const s = zToScreen(z);
+  // Apply convex curve: edges spread out faster than linear
+  const curve = Math.pow(Math.max(0, z), ROAD_CURVE_POW);
+  const hw = ROAD_HW * curve;
+  return VX + side * hw;
+}
+
 function drawTrack() {
-  // Road surface
+  // Road surface — filled with curved edges
+  const CURVE_STEPS = 40;
   ctx.save();
   ctx.beginPath();
   ctx.moveTo(VX, VY);
-  const bl = VX - ROAD_HW, br = VX + ROAD_HW;
-  ctx.lineTo(bl, ROAD_BOTTOM);
-  ctx.lineTo(bl, H);
-  ctx.lineTo(br, H);
-  ctx.lineTo(br, ROAD_BOTTOM);
+  // Right edge from horizon to bottom
+  for (let i = 1; i <= CURVE_STEPS; i++) {
+    const z = i / CURVE_STEPS;
+    const s = zToScreen(z);
+    ctx.lineTo(roadEdgeX(z, 1), s.y);
+  }
+  // Bottom right to bottom-left (below road)
+  const sBottom = zToScreen(1.0);
+  ctx.lineTo(roadEdgeX(1.0, 1), H);
+  ctx.lineTo(roadEdgeX(1.0, -1), H);
+  // Left edge from bottom back to horizon
+  for (let i = CURVE_STEPS; i >= 0; i--) {
+    const z = i / CURVE_STEPS;
+    const s = zToScreen(z);
+    ctx.lineTo(roadEdgeX(z, -1), s.y);
+  }
   ctx.closePath();
   const rg = ctx.createLinearGradient(VX, VY, VX, H);
   rg.addColorStop(0, '#0a0a14');
@@ -645,7 +670,7 @@ function drawTrack() {
   ctx.fill();
   ctx.restore();
 
-  // Scrolling horizontal road lines
+  // Scrolling horizontal road lines (curved arcs)
   const NUM_LINES = 22;
   ctx.save();
   for (let i = 0; i < NUM_LINES; i++) {
@@ -655,38 +680,58 @@ function drawTrack() {
     const alpha = Math.min(1, s.t * 1.5) * 0.2;
     ctx.strokeStyle = `rgba(50,80,140,${alpha})`;
     ctx.lineWidth = 1;
+    const lx = roadEdgeX(z, -1);
+    const rx = roadEdgeX(z, 1);
+    // Draw curved horizontal line (arc bowing downward for sphere feel)
+    const arcSag = 8 * Math.pow(z, ROAD_CURVE_POW); // how much the arc bows down
     ctx.beginPath();
-    ctx.moveTo(VX - s.hw, s.y);
-    ctx.lineTo(VX + s.hw, s.y);
+    ctx.moveTo(lx, s.y);
+    ctx.quadraticCurveTo(VX, s.y + arcSag, rx, s.y);
     ctx.stroke();
   }
   ctx.restore();
 
-  // Lane divider lines (6 lanes visible for the wide road look)
+  // Lane divider lines (6 lanes visible, curved paths)
   ctx.save();
   const NUM_VISIBLE_LANES = 6;
+  const LANE_STEPS = 30;
   for (let i = 1; i < NUM_VISIBLE_LANES; i++) {
-    const wx = -0.5 + i / NUM_VISIBLE_LANES;
-    const nearX = VX + wx * ROAD_HW * 2;
+    const laneT = i / NUM_VISIBLE_LANES; // 0..1 across road width
     ctx.strokeStyle = 'rgba(60,100,180,0.3)';
     ctx.lineWidth = 1;
     ctx.setLineDash([6, 10]);
     ctx.beginPath();
-    ctx.moveTo(VX, VY);
-    ctx.lineTo(nearX, ROAD_BOTTOM);
+    for (let j = 0; j <= LANE_STEPS; j++) {
+      const z = j / LANE_STEPS;
+      const s = zToScreen(z);
+      const lx = roadEdgeX(z, -1);
+      const rx = roadEdgeX(z, 1);
+      const x = lx + (rx - lx) * laneT;
+      if (j === 0) ctx.moveTo(x, s.y);
+      else ctx.lineTo(x, s.y);
+    }
     ctx.stroke();
   }
   ctx.setLineDash([]);
   ctx.restore();
 
-  // Road edges (neon)
+  // Road edges (neon, curved)
   ctx.save();
   ctx.shadowBlur = 12;
   ctx.shadowColor = '#0088ff';
   ctx.strokeStyle = '#0088ff';
   ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(VX, VY); ctx.lineTo(VX - ROAD_HW, ROAD_BOTTOM); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(VX, VY); ctx.lineTo(VX + ROAD_HW, ROAD_BOTTOM); ctx.stroke();
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    for (let i = 0; i <= CURVE_STEPS; i++) {
+      const z = i / CURVE_STEPS;
+      const s = zToScreen(z);
+      const x = roadEdgeX(z, side);
+      if (i === 0) ctx.moveTo(x, s.y);
+      else ctx.lineTo(x, s.y);
+    }
+    ctx.stroke();
+  }
   ctx.restore();
 
   // Side barriers with lights
@@ -704,7 +749,7 @@ function drawSideBarriers() {
       const z = (i + roadScroll) / NUM_POSTS;
       const s = zToScreen(z);
       if (s.t < 0.01) continue;
-      const x = VX + side * (s.hw + 8 * s.t);
+      const x = roadEdgeX(z, side) + side * 8 * s.t;
       const h = 25 * s.t;
       const alpha = Math.min(1, s.t * 2) * 0.6;
 
@@ -813,8 +858,9 @@ function drawObstacles() {
     ctx.globalAlpha = alpha;
 
     const col = o.judged && o.judgment === 'MISS' ? '#555' : OBS_COLORS[o.type];
-    // X offset for side obstacles scales with road half-width at this depth
-    const sideOff = s.hw * 0.12;
+    // X offset for side obstacles follows curved road edges
+    const curvedHW = ROAD_HW * Math.pow(Math.max(0, z), ROAD_CURVE_POW);
+    const sideOff = curvedHW * 0.12;
 
     if (o.type === 'PYLON_R') {
       drawPylon(VX + sideOff, y, scale, col, false);
