@@ -30,7 +30,7 @@ const ROAD_HW = 360;         // half-width of road at bottom
 const PERSP_POW = 1.5;
 
 // Obstacle scroll
-const OBS_SCROLL_TIME = 1.2; // seconds from spawn to judgment line
+const OBS_SCROLL_TIME = 1.8; // seconds from spawn to judgment line (wider spacing)
 
 // Timing windows (seconds)
 const T_PERFECT = 0.045;
@@ -288,21 +288,21 @@ function generateChart() {
   ];
 
   const hard = [
+    [[0, 3], [1, 0], [2, 4], [3, 2]],
+    [[0, 0], [1, 1], [2, 5], [3, 3]],
+    [[0, 2], [1, 4], [2, 1], [3, 0]],
+    [[0, 5], [1, 2], [2, 3], [3, 4]],
+    [[0, 3], [1, 5], [2, 0], [3, 1]],
+    [[0, 0], [1, 4], [2, 3], [3, 5]],
+    [[0, 4], [1, 1], [2, 2], [3, 0]],
+    [[0, 1], [1, 3], [2, 5], [3, 4]],
+  ];
+
+  const expert = [
     [[0, 3], [0.5, 2], [1, 0], [1.5, 4], [2, 5], [2.5, 1], [3, 3], [3.5, 2]],
     [[0, 0], [0.5, 1], [1, 5], [1.5, 2], [2, 4], [2.5, 0], [3, 3], [3.5, 1]],
     [[0, 2], [0.5, 4], [1, 1], [1.5, 0], [2, 3], [2.5, 5], [3, 0], [3.5, 2]],
     [[0, 5], [0.5, 0], [1, 3], [1.5, 1], [2, 2], [2.5, 4], [3, 1], [3.5, 3]],
-    [[0, 3], [0.5, 5], [1, 2], [1.5, 0], [2, 4], [2.5, 1], [3, 3], [3.5, 5]],
-    [[0, 0], [0.5, 4], [1, 1], [1.5, 3], [2, 5], [2.5, 2], [3, 0], [3.5, 4]],
-    [[0, 4], [0.5, 0], [1, 5], [1.5, 1], [2, 3], [2.5, 2], [3, 4], [3.5, 0]],
-    [[0, 1], [0.5, 3], [1, 0], [1.5, 5], [2, 2], [2.5, 4], [3, 1], [3.5, 3]],
-  ];
-
-  const expert = [
-    [[0, 3], [0.25, 2], [0.5, 4], [0.75, 0], [1, 5], [1.25, 1], [1.5, 3], [1.75, 2], [2, 0], [2.25, 4], [2.5, 1], [2.75, 5], [3, 3], [3.25, 2], [3.5, 0], [3.75, 4]],
-    [[0, 0], [0.25, 5], [0.5, 3], [0.75, 2], [1, 4], [1.25, 0], [1.5, 1], [1.75, 3], [2, 5], [2.25, 2], [2.5, 0], [2.75, 4], [3, 1], [3.25, 3], [3.5, 5], [3.75, 2]],
-    [[0, 2], [0.25, 4], [0.5, 0], [0.75, 1], [1, 5], [1.25, 3], [1.5, 2], [1.75, 0], [2, 4], [2.25, 1], [2.5, 3], [2.75, 5], [3, 0], [3.25, 2], [3.5, 4], [3.75, 1]],
-    [[0, 5], [0.25, 0], [0.5, 1], [0.75, 4], [1, 3], [1.25, 2], [1.5, 5], [1.75, 1], [2, 0], [2.25, 3], [2.5, 4], [2.75, 2], [3, 1], [3.25, 5], [3.5, 3], [3.75, 0]],
   ];
 
   for (let bar = 0; bar < SONG_BARS; bar++) {
@@ -866,8 +866,9 @@ function drawObstacles() {
     // Use road perspective mapping so obstacles move WITH the road surface
     const s = zToScreen(z);
     const y = s.y;
-    // Scale matches road perspective — small far away, full size near judgment line
-    const scale = Math.max(0.12, s.t);
+    // Smoother scaling: use sqrt-based curve capped at 0.85 to prevent sudden size jump
+    const rawScale = Math.max(0.10, s.t);
+    const scale = Math.min(0.85, rawScale);
 
     // Alpha: fade in gradually from far, dim if missed
     let alpha = Math.min(1, s.t * 2.5);
@@ -915,7 +916,7 @@ function drawObstacles() {
 }
 
 function drawPylon(x, y, scale, color, isLeft) {
-  // Traffic cone / pylon shape — enlarged for visibility
+  // Traffic cone / pylon shape
   const w = 28 * scale;
   const h = 70 * scale;
 
@@ -941,19 +942,27 @@ function drawPylon(x, y, scale, color, isLeft) {
   ctx.fillRect(x - w * 0.65, y - h * 0.65, w * 1.3, stripeH);
   ctx.globalAlpha = 1;
 
-  // Arrow indicator showing which key to press
+  // Arrow badge (colored circle with arrow)
+  const badgeR = Math.max(12, 20 * scale);
+  const badgeY = y - h - badgeR - 4 * scale;
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.arc(x, badgeY, badgeR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
   ctx.fillStyle = '#fff';
-  ctx.font = `bold ${Math.max(10, Math.round(16 * scale))}px sans-serif`;
+  ctx.font = `bold ${Math.max(14, Math.round(22 * scale))}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.shadowBlur = 0;
-  ctx.fillText(isLeft ? '→' : '←', x, y - h - 8 * scale);
+  ctx.fillText(isLeft ? '→' : '←', x, badgeY);
 
   ctx.restore();
 }
 
 function drawArch(x, y, scale, color) {
-  // Arch / gate shape - overhead obstacle — enlarged
+  // Arch / gate shape - overhead obstacle
   const w = 90 * scale;
   const h = 85 * scale;
   const postW = 12 * scale;
@@ -976,19 +985,27 @@ function drawArch(x, y, scale, color) {
   ctx.fillRect(x - w - postW, y - h - postW, w * 2 + postW * 2, postW * 0.5);
   ctx.globalAlpha = 1;
 
-  // Arrow indicator
+  // Arrow badge
+  const badgeR = Math.max(12, 20 * scale);
+  const badgeY = y - h - postW - badgeR - 4 * scale;
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.arc(x, badgeY, badgeR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
   ctx.fillStyle = '#fff';
-  ctx.font = `bold ${Math.max(10, Math.round(16 * scale))}px sans-serif`;
+  ctx.font = `bold ${Math.max(14, Math.round(22 * scale))}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.shadowBlur = 0;
-  ctx.fillText('↓', x, y - h - postW - 10 * scale);
+  ctx.fillText('↓', x, badgeY);
 
   ctx.restore();
 }
 
 function drawBlock(x, y, scale, color) {
-  // Ground block - low obstacle to jump over — enlarged
+  // Ground block - low obstacle to jump over
   const w = 70 * scale;
   const h = 38 * scale;
 
@@ -1013,19 +1030,27 @@ function drawBlock(x, y, scale, color) {
   ctx.strokeRect(x - w, y - h, w * 2, h);
   ctx.globalAlpha = 1;
 
-  // Arrow indicator
+  // Arrow badge
+  const badgeR = Math.max(12, 20 * scale);
+  const badgeY = y - h - badgeR - 4 * scale;
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.arc(x, badgeY, badgeR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
   ctx.fillStyle = '#fff';
-  ctx.font = `bold ${Math.max(10, Math.round(16 * scale))}px sans-serif`;
+  ctx.font = `bold ${Math.max(14, Math.round(22 * scale))}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.shadowBlur = 0;
-  ctx.fillText('↑', x, y - h - 10 * scale);
+  ctx.fillText('↑', x, badgeY);
 
   ctx.restore();
 }
 
 function drawStar(x, y, scale, color, isLeft) {
-  // Yellow star collectible — enlarged
+  // Yellow star collectible
   const r = 34 * scale;
   const ir = 16 * scale;
 
@@ -1059,13 +1084,21 @@ function drawStar(x, y, scale, color, isLeft) {
   ctx.fill();
   ctx.globalAlpha = 1;
 
-  // Arrow indicator showing which key to press (same direction as star)
+  // Arrow badge
+  const badgeR = Math.max(12, 20 * scale);
+  const badgeY = y - r * 1.4 - badgeR;
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.arc(x, badgeY, badgeR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
   ctx.fillStyle = '#fff';
-  ctx.font = `bold ${Math.max(10, Math.round(16 * scale))}px sans-serif`;
+  ctx.font = `bold ${Math.max(14, Math.round(22 * scale))}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.shadowBlur = 0;
-  ctx.fillText(isLeft ? '←' : '→', x, y - r * 1.6);
+  ctx.fillText(isLeft ? '←' : '→', x, badgeY);
 
   ctx.restore();
 }
@@ -1095,119 +1128,236 @@ function drawCharacter() {
   // Running bounce (only while running)
   const isRunning = charAction === 'RUN';
   const bounce = isRunning ? Math.abs(Math.sin(phase)) * 4 : 0;
-  const legSwing = isRunning ? Math.sin(phase) * 14 : 0;
+  const legSwing = isRunning ? Math.sin(phase) * 10 : 0;
 
   ctx.save();
   ctx.translate(cx, cy - bounce);
 
-  // Larger scale for avatar visibility (1.6x base)
+  // Character scale
   const sc = 1.6;
   ctx.scale(sc, sc * scaleY);
 
   // Shadow on ground
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.beginPath();
-  ctx.ellipse(0, 2 + bounce, 24, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 2 + bounce, 20, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // --- Character body (back view, designed for future avatar customization) ---
+  // --- Cute Chibi Character (back view) ---
 
-  // Legs
-  ctx.strokeStyle = '#f0c8a0';
-  ctx.lineWidth = 5;
+  // Legs (short stubby)
+  ctx.fillStyle = '#ffd1dc';
+  ctx.beginPath();
+  ctx.ellipse(-6 - legSwing * 0.3, -3, 5, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(6 + legSwing * 0.3, -3, 5, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Shoes (small, pink)
+  ctx.fillStyle = '#ff6699';
+  ctx.beginPath();
+  ctx.ellipse(-6 - legSwing * 0.3, 3, 5, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(6 + legSwing * 0.3, 3, 5, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Body (round, small — pastel dress)
+  const bodyGrad = ctx.createLinearGradient(0, -22, 0, -6);
+  bodyGrad.addColorStop(0, '#ffb7d5');
+  bodyGrad.addColorStop(1, '#ff8ec4');
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, -14, 12, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Little white collar / bow accent
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.ellipse(-5, -22, 4, 2.5, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(5, -22, 4, 2.5, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  // Bow center
+  ctx.fillStyle = '#ff4488';
+  ctx.beginPath();
+  ctx.arc(0, -22, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Arms (stubby)
+  const armSwing = isRunning ? Math.sin(phase + Math.PI) * 8 : 0;
+  ctx.fillStyle = '#ffd1dc';
+  ctx.beginPath();
+  ctx.ellipse(-14 - armSwing * 0.2, -16, 4, 6, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(14 + armSwing * 0.2, -16, 4, 6, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Hands (round, skin)
+  ctx.fillStyle = '#ffe0c8';
+  ctx.beginPath();
+  ctx.arc(-14 - armSwing * 0.2, -11, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(14 + armSwing * 0.2, -11, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Head (big round — chibi proportions)
+  const headR = 18;
+  const headY = -38;
+
+  // Hair base (pink-lavender, covers back of head)
+  ctx.fillStyle = '#c88aff';
+  ctx.beginPath();
+  ctx.arc(0, headY, headR + 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Face (skin circle, slightly forward)
+  ctx.fillStyle = '#ffe5d0';
+  ctx.beginPath();
+  ctx.arc(0, headY, headR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Cat ears
+  ctx.fillStyle = '#c88aff';
+  // Left ear
+  ctx.beginPath();
+  ctx.moveTo(-12, headY - 14);
+  ctx.lineTo(-18, headY - 30);
+  ctx.lineTo(-4, headY - 18);
+  ctx.closePath();
+  ctx.fill();
+  // Right ear
+  ctx.beginPath();
+  ctx.moveTo(12, headY - 14);
+  ctx.lineTo(18, headY - 30);
+  ctx.lineTo(4, headY - 18);
+  ctx.closePath();
+  ctx.fill();
+
+  // Inner ears (pink)
+  ctx.fillStyle = '#ffaacc';
+  ctx.beginPath();
+  ctx.moveTo(-11, headY - 15);
+  ctx.lineTo(-15, headY - 26);
+  ctx.lineTo(-6, headY - 18);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(11, headY - 15);
+  ctx.lineTo(15, headY - 26);
+  ctx.lineTo(6, headY - 18);
+  ctx.closePath();
+  ctx.fill();
+
+  // Eyes (big, cute — front-facing chibi eyes)
+  // White part
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.ellipse(-7, headY + 1, 6, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(7, headY + 1, 6, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Iris (big, violet)
+  ctx.fillStyle = '#8844cc';
+  ctx.beginPath();
+  ctx.ellipse(-7, headY + 2, 4.5, 5.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(7, headY + 2, 4.5, 5.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Pupil (dark)
+  ctx.fillStyle = '#220033';
+  ctx.beginPath();
+  ctx.ellipse(-7, headY + 3, 2.5, 3.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(7, headY + 3, 2.5, 3.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eye sparkles
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(-8.5, headY - 1, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(5.5, headY - 1, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(-6, headY + 4, 1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(8, headY + 4, 1, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Blush (pink circles on cheeks)
+  ctx.fillStyle = 'rgba(255,130,170,0.45)';
+  ctx.beginPath();
+  ctx.ellipse(-12, headY + 6, 4, 2.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(12, headY + 6, 4, 2.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Mouth (small, cute cat mouth :3)
+  ctx.strokeStyle = '#aa5577';
+  ctx.lineWidth = 1.2;
+  ctx.lineCap = 'round';
+  // Left curve
+  ctx.beginPath();
+  ctx.moveTo(-2, headY + 8);
+  ctx.quadraticCurveTo(-4, headY + 11, -6, headY + 9);
+  ctx.stroke();
+  // Right curve
+  ctx.beginPath();
+  ctx.moveTo(2, headY + 8);
+  ctx.quadraticCurveTo(4, headY + 11, 6, headY + 9);
+  ctx.stroke();
+
+  // Hair bangs (front fringe over forehead)
+  ctx.fillStyle = '#c88aff';
+  ctx.beginPath();
+  ctx.moveTo(-headR - 1, headY - 6);
+  ctx.quadraticCurveTo(-headR + 2, headY - headR - 4, -6, headY - headR + 2);
+  ctx.lineTo(-3, headY - 10);
+  ctx.lineTo(0, headY - headR + 3);
+  ctx.lineTo(3, headY - 10);
+  ctx.lineTo(6, headY - headR + 2);
+  ctx.quadraticCurveTo(headR - 2, headY - headR - 4, headR + 1, headY - 6);
+  ctx.lineTo(headR, headY - 4);
+  ctx.quadraticCurveTo(0, headY - 8, -headR, headY - 4);
+  ctx.closePath();
+  ctx.fill();
+
+  // Hair side strands
+  ctx.beginPath();
+  ctx.moveTo(-headR, headY);
+  ctx.quadraticCurveTo(-headR - 4, headY + 10, -headR + 2, headY + 16);
+  ctx.lineTo(-headR + 1, headY + 4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(headR, headY);
+  ctx.quadraticCurveTo(headR + 4, headY + 10, headR - 2, headY + 16);
+  ctx.lineTo(headR - 1, headY + 4);
+  ctx.closePath();
+  ctx.fill();
+
+  // Tail (cute curly tail behind body)
+  ctx.strokeStyle = '#c88aff';
+  ctx.lineWidth = 3;
   ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(-7, -14);
-  ctx.lineTo(-7 - legSwing * 0.4, 0);
+  ctx.moveTo(0, -8);
+  ctx.quadraticCurveTo(12, -12, 14, -18);
+  ctx.quadraticCurveTo(16, -24, 10, -22);
   ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(7, -14);
-  ctx.lineTo(7 + legSwing * 0.4, 0);
-  ctx.stroke();
-
-  // Shoes
-  ctx.fillStyle = '#222';
-  ctx.beginPath();
-  ctx.ellipse(-7 - legSwing * 0.4, 1, 6, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(7 + legSwing * 0.4, 1, 6, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Body / Torso (white shirt with red trim)
-  ctx.fillStyle = '#eee';
-  ctx.beginPath();
-  ctx.moveTo(-14, -32);
-  ctx.lineTo(14, -32);
-  ctx.lineTo(12, -12);
-  ctx.lineTo(-12, -12);
-  ctx.closePath();
-  ctx.fill();
-
-  // Red collar accent
-  ctx.strokeStyle = '#cc2244';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(-10, -32);
-  ctx.lineTo(0, -28);
-  ctx.lineTo(10, -32);
-  ctx.stroke();
-
-  // Skirt / bottom trim
-  ctx.fillStyle = '#cc2244';
-  ctx.fillRect(-12, -16, 24, 4);
-
-  // Arms
-  const armSwing = isRunning ? Math.sin(phase + Math.PI) * 12 : 0;
-  ctx.strokeStyle = '#eee';
-  ctx.lineWidth = 4;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(-14, -28);
-  ctx.lineTo(-16 - armSwing * 0.3, -16);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(14, -28);
-  ctx.lineTo(16 + armSwing * 0.3, -16);
-  ctx.stroke();
-
-  // Hands
-  ctx.fillStyle = '#f0c8a0';
-  ctx.beginPath();
-  ctx.arc(-16 - armSwing * 0.3, -15, 3, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(16 + armSwing * 0.3, -15, 3, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Head
-  ctx.fillStyle = '#f5d0b0';
-  ctx.beginPath();
-  ctx.arc(0, -44, 12, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Hair (dark brown, back view)
-  ctx.fillStyle = '#3a2211';
-  ctx.beginPath();
-  ctx.arc(0, -46, 13, Math.PI * 0.85, Math.PI * 2.15);
-  ctx.lineTo(13, -42);
-  ctx.quadraticCurveTo(14, -35, 12, -32);
-  ctx.lineTo(-12, -32);
-  ctx.quadraticCurveTo(-14, -35, -13, -42);
-  ctx.closePath();
-  ctx.fill();
-
-  // Hair spikes
-  ctx.beginPath();
-  ctx.moveTo(-8, -57);
-  ctx.lineTo(-3, -50);
-  ctx.lineTo(0, -60);
-  ctx.lineTo(4, -50);
-  ctx.lineTo(9, -58);
-  ctx.lineTo(7, -48);
-  ctx.lineTo(-7, -48);
-  ctx.closePath();
-  ctx.fill();
 
   ctx.restore();
 }
