@@ -793,15 +793,17 @@ function drawObstacles() {
   }
   visible.sort((a, b) => a.z - b.z);
 
-  // Fixed scale for obstacle rendering (constant size, no perspective shrinking)
-  const FIXED_SCALE = 1.0;
-
   for (const { obs: o, z } of visible) {
     if (z < 0.02) continue;
-    const s = zToScreen(z);
-    const y = s.y;
-    // Use perspective t only for x-offset positioning, not for obstacle size
-    const perspT = s.t;
+
+    // Linear z→screen mapping for constant visual speed (no PERSP_POW slowdown)
+    // Obstacles move at constant pixel-per-second from vanishing point to judgment line
+    const y = VY + (ROAD_BOTTOM - VY) * z;
+    // Scale: small at vanishing point, full size near judgment line
+    // Min scale 0.15 so far obstacles are still visible
+    const scale = Math.max(0.15, z);
+    // Road half-width at this depth (linear) for x-offset
+    const hw = ROAD_HW * z;
 
     // Alpha: fade in from far, dim if missed
     let alpha = Math.min(1, z * 3);
@@ -814,19 +816,21 @@ function drawObstacles() {
     ctx.globalAlpha = alpha;
 
     const col = o.judged && o.judgment === 'MISS' ? '#555' : OBS_COLORS[o.type];
+    // X offset for side obstacles scales with road width
+    const sideOff = hw * 0.12;
 
     if (o.type === 'PYLON_R') {
-      drawPylon(VX + 40 * perspT, y, FIXED_SCALE, col, false);
+      drawPylon(VX + sideOff, y, scale, col, false);
     } else if (o.type === 'PYLON_L') {
-      drawPylon(VX - 40 * perspT, y, FIXED_SCALE, col, true);
+      drawPylon(VX - sideOff, y, scale, col, true);
     } else if (o.type === 'ARCH') {
-      drawArch(VX, y, FIXED_SCALE, col);
+      drawArch(VX, y, scale, col);
     } else if (o.type === 'BLOCK') {
-      drawBlock(VX, y, FIXED_SCALE, col);
+      drawBlock(VX, y, scale, col);
     } else if (o.type === 'STAR_R') {
-      drawStar(VX + 40 * perspT, y, FIXED_SCALE, col, false);
+      drawStar(VX + sideOff, y, scale, col, false);
     } else if (o.type === 'STAR_L') {
-      drawStar(VX - 40 * perspT, y, FIXED_SCALE, col, true);
+      drawStar(VX - sideOff, y, scale, col, true);
     }
 
     // Near-judgment-line boost glow
@@ -837,7 +841,7 @@ function drawObstacles() {
       ctx.fillStyle = col;
       ctx.globalAlpha = boost * 0.15;
       ctx.beginPath();
-      ctx.arc(VX, y, 35, 0, Math.PI * 2);
+      ctx.arc(VX, y, 35 * scale, 0, Math.PI * 2);
       ctx.fill();
     }
 
