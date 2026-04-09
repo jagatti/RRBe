@@ -53,6 +53,8 @@ file:///path/to/RRBe/index.html
 | `→` Right Arrow | **Dodge right** — avoid a pylon on the left side |
 | `↓` Down Arrow | **Duck** — crouch under an overhead arch |
 | `↑` Up Arrow | **Jump** — leap over a ground block |
+| `→` Right Arrow | **Collect** — grab a star on the right side |
+| `←` Left Arrow | **Collect** — grab a star on the left side |
 | `SPACE` | Start the game |
 | `R` / `SPACE` | Restart after Game Over or Results |
 
@@ -72,6 +74,8 @@ obstacle reaches the **judgment zone** near the character:
 | 🟠 **Pylon (left)** | Orange cone on the LEFT side | Dodge RIGHT | `→` |
 | 🔵 **Arch** | Cyan overhead gate | DUCK under | `↓` |
 | 🟢 **Block** | Green ground barrier | JUMP over | `↑` |
+| ⭐ **Star (right)** | Yellow star on the RIGHT side | Collect RIGHT | `→` |
+| ⭐ **Star (left)** | Yellow star on the LEFT side | Collect LEFT | `←` |
 
 ### Timing & Judgments
 
@@ -142,6 +146,7 @@ simple half-note patterns to dense 16th-note sequences.
 | Pylon (left/right) | 🟠 Orange |
 | Arch (overhead) | 🔵 Cyan/Blue |
 | Block (ground) | 🟢 Green |
+| Star (left/right) | ⭐ Yellow |
 
 ---
 
