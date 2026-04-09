@@ -1048,7 +1048,7 @@ function drawStar(x, y, scale, color, isLeft) {
   ctx.restore();
 }
 function drawCharacter() {
-  const baseY = ROAD_BOTTOM + 30;
+  const baseY = ROAD_BOTTOM;  // feet ON the road at judgment line
   const phase = charPhase;
 
   // Calculate character position based on action
@@ -1058,11 +1058,11 @@ function drawCharacter() {
 
   if (charAction === 'DODGE_L') {
     const t = 1 - (charActionTimer / ACTION_DUR);
-    const sway = Math.sin(t * Math.PI) * 50;
+    const sway = Math.sin(t * Math.PI) * 60;
     cx = VX - sway;
   } else if (charAction === 'DODGE_R') {
     const t = 1 - (charActionTimer / ACTION_DUR);
-    const sway = Math.sin(t * Math.PI) * 50;
+    const sway = Math.sin(t * Math.PI) * 60;
     cx = VX + sway;
   } else if (charAction === 'DUCK') {
     scaleY = 0.5;
@@ -1072,50 +1072,53 @@ function drawCharacter() {
 
   // Running bounce (only while running)
   const isRunning = charAction === 'RUN';
-  const bounce = isRunning ? Math.abs(Math.sin(phase)) * 3 : 0;
-  const legSwing = isRunning ? Math.sin(phase) * 12 : 0;
+  const bounce = isRunning ? Math.abs(Math.sin(phase)) * 4 : 0;
+  const legSwing = isRunning ? Math.sin(phase) * 14 : 0;
 
   ctx.save();
   ctx.translate(cx, cy - bounce);
 
-  const sc = 0.95;
+  // Larger scale for avatar visibility (1.6x base)
+  const sc = 1.6;
   ctx.scale(sc, sc * scaleY);
 
   // Shadow on ground
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.beginPath();
-  ctx.ellipse(0, 28 + bounce, 20, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 2 + bounce, 24, 6, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  // --- Character body (back view, designed for future avatar customization) ---
 
   // Legs
   ctx.strokeStyle = '#f0c8a0';
   ctx.lineWidth = 5;
   ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(-6, 12);
-  ctx.lineTo(-6 - legSwing * 0.4, 26);
+  ctx.moveTo(-7, -14);
+  ctx.lineTo(-7 - legSwing * 0.4, 0);
   ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(6, 12);
-  ctx.lineTo(6 + legSwing * 0.4, 26);
+  ctx.moveTo(7, -14);
+  ctx.lineTo(7 + legSwing * 0.4, 0);
   ctx.stroke();
 
   // Shoes
   ctx.fillStyle = '#222';
   ctx.beginPath();
-  ctx.ellipse(-6 - legSwing * 0.4, 27, 5, 3, 0, 0, Math.PI * 2);
+  ctx.ellipse(-7 - legSwing * 0.4, 1, 6, 3, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.ellipse(6 + legSwing * 0.4, 27, 5, 3, 0, 0, Math.PI * 2);
+  ctx.ellipse(7 + legSwing * 0.4, 1, 6, 3, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Body (white shirt with red trim)
+  // Body / Torso (white shirt with red trim)
   ctx.fillStyle = '#eee';
   ctx.beginPath();
-  ctx.moveTo(-13, -6);
-  ctx.lineTo(13, -6);
-  ctx.lineTo(11, 14);
-  ctx.lineTo(-11, 14);
+  ctx.moveTo(-14, -32);
+  ctx.lineTo(14, -32);
+  ctx.lineTo(12, -12);
+  ctx.lineTo(-12, -12);
   ctx.closePath();
   ctx.fill();
 
@@ -1123,64 +1126,64 @@ function drawCharacter() {
   ctx.strokeStyle = '#cc2244';
   ctx.lineWidth = 2.5;
   ctx.beginPath();
-  ctx.moveTo(-9, -6);
-  ctx.lineTo(0, -2);
-  ctx.lineTo(9, -6);
+  ctx.moveTo(-10, -32);
+  ctx.lineTo(0, -28);
+  ctx.lineTo(10, -32);
   ctx.stroke();
 
   // Skirt / bottom trim
   ctx.fillStyle = '#cc2244';
-  ctx.fillRect(-11, 10, 22, 4);
+  ctx.fillRect(-12, -16, 24, 4);
 
   // Arms
-  const armSwing = isRunning ? Math.sin(phase + Math.PI) * 10 : 0;
+  const armSwing = isRunning ? Math.sin(phase + Math.PI) * 12 : 0;
   ctx.strokeStyle = '#eee';
   ctx.lineWidth = 4;
   ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(-13, -2);
-  ctx.lineTo(-15 - armSwing * 0.3, 10);
+  ctx.moveTo(-14, -28);
+  ctx.lineTo(-16 - armSwing * 0.3, -16);
   ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(13, -2);
-  ctx.lineTo(15 + armSwing * 0.3, 10);
+  ctx.moveTo(14, -28);
+  ctx.lineTo(16 + armSwing * 0.3, -16);
   ctx.stroke();
 
   // Hands
   ctx.fillStyle = '#f0c8a0';
   ctx.beginPath();
-  ctx.arc(-15 - armSwing * 0.3, 11, 2.5, 0, Math.PI * 2);
+  ctx.arc(-16 - armSwing * 0.3, -15, 3, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.arc(15 + armSwing * 0.3, 11, 2.5, 0, Math.PI * 2);
+  ctx.arc(16 + armSwing * 0.3, -15, 3, 0, Math.PI * 2);
   ctx.fill();
 
   // Head
   ctx.fillStyle = '#f5d0b0';
   ctx.beginPath();
-  ctx.arc(0, -17, 11, 0, Math.PI * 2);
+  ctx.arc(0, -44, 12, 0, Math.PI * 2);
   ctx.fill();
 
   // Hair (dark brown, back view)
   ctx.fillStyle = '#3a2211';
   ctx.beginPath();
-  ctx.arc(0, -19, 12, Math.PI * 0.85, Math.PI * 2.15);
-  ctx.lineTo(12, -15);
-  ctx.quadraticCurveTo(13, -8, 11, -6);
-  ctx.lineTo(-11, -6);
-  ctx.quadraticCurveTo(-13, -8, -12, -15);
+  ctx.arc(0, -46, 13, Math.PI * 0.85, Math.PI * 2.15);
+  ctx.lineTo(13, -42);
+  ctx.quadraticCurveTo(14, -35, 12, -32);
+  ctx.lineTo(-12, -32);
+  ctx.quadraticCurveTo(-14, -35, -13, -42);
   ctx.closePath();
   ctx.fill();
 
   // Hair spikes
   ctx.beginPath();
-  ctx.moveTo(-7, -29);
-  ctx.lineTo(-3, -23);
-  ctx.lineTo(0, -32);
-  ctx.lineTo(4, -23);
-  ctx.lineTo(8, -30);
-  ctx.lineTo(6, -21);
-  ctx.lineTo(-6, -21);
+  ctx.moveTo(-8, -57);
+  ctx.lineTo(-3, -50);
+  ctx.lineTo(0, -60);
+  ctx.lineTo(4, -50);
+  ctx.lineTo(9, -58);
+  ctx.lineTo(7, -48);
+  ctx.lineTo(-7, -48);
   ctx.closePath();
   ctx.fill();
 
@@ -1386,7 +1389,7 @@ function drawJudgePopup() {
   const scale = 1 + (1 - t) * 0.3;
   const alpha = Math.min(1, t * 2);
 
-  ctx.translate(VX, ROAD_BOTTOM - 70);
+  ctx.translate(VX, ROAD_BOTTOM - 120);
   ctx.scale(scale, scale);
   ctx.globalAlpha = alpha;
 
