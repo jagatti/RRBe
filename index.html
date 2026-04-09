@@ -30,7 +30,7 @@ const ROAD_HW = 340;         // half-width of road at bottom
 const PERSP_POW = 1.5;
 
 // Obstacle scroll
-const OBS_SCROLL_TIME = 1.4; // seconds from spawn to judgment line (fast for sense of speed)
+const OBS_SCROLL_TIME = 2.0; // seconds from spawn to judgment line
 
 // Timing windows (seconds)
 const T_PERFECT = 0.045;
@@ -794,19 +794,16 @@ function drawObstacles() {
   visible.sort((a, b) => a.z - b.z);
 
   for (const { obs: o, z } of visible) {
-    if (z < 0.02) continue;
+    if (z < 0.05) continue;
 
-    // Linear z→screen mapping for constant visual speed (no PERSP_POW slowdown)
-    // Obstacles move at constant pixel-per-second from vanishing point to judgment line
-    const y = VY + (ROAD_BOTTOM - VY) * z;
-    // Scale: small at vanishing point, full size near judgment line
-    // Min scale 0.15 so far obstacles are still visible
-    const scale = Math.max(0.15, z);
-    // Road half-width at this depth (linear) for x-offset
-    const hw = ROAD_HW * z;
+    // Use road perspective mapping so obstacles move WITH the road surface
+    const s = zToScreen(z);
+    const y = s.y;
+    // Scale matches road perspective — small far away, full size near judgment line
+    const scale = Math.max(0.12, s.t);
 
-    // Alpha: fade in from far, dim if missed
-    let alpha = Math.min(1, z * 3);
+    // Alpha: fade in gradually from far, dim if missed
+    let alpha = Math.min(1, s.t * 2.5);
     if (o.judged && o.judgment === 'MISS') {
       const fadeZ = z - 1.0;
       alpha = Math.max(0, 1 - fadeZ * 4) * 0.35;
@@ -816,8 +813,8 @@ function drawObstacles() {
     ctx.globalAlpha = alpha;
 
     const col = o.judged && o.judgment === 'MISS' ? '#555' : OBS_COLORS[o.type];
-    // X offset for side obstacles scales with road width
-    const sideOff = hw * 0.12;
+    // X offset for side obstacles scales with road half-width at this depth
+    const sideOff = s.hw * 0.12;
 
     if (o.type === 'PYLON_R') {
       drawPylon(VX + sideOff, y, scale, col, false);
