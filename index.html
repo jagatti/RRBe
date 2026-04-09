@@ -19,30 +19,50 @@ const W = 960, H = 640;
 const BPM = 128;
 const BEAT_S = 60 / BPM;
 const STEP_S = BEAT_S / 4;
-const NUM_LANES = 4;
-const NOTE_SCROLL_TIME = 2.0;
 const SONG_BARS = 48;
 const SONG_DURATION = SONG_BARS * 4 * BEAT_S;
 
 // Perspective
-const VX = W / 2;        // vanishing point X
-const VY = 85;            // vanishing point Y
-const ROAD_BOTTOM = 570;  // road bottom edge
-const ROAD_HW = 340;      // half-width at bottom
-const PERSP_POW = 1.5;    // perspective curve exponent
+const VX = W / 2;           // vanishing point X
+const VY = 85;               // vanishing point Y
+const ROAD_BOTTOM = 550;     // road bottom edge (near player)
+const ROAD_HW = 340;         // half-width of road at bottom
+const PERSP_POW = 1.5;
+
+// Obstacle scroll
+const OBS_SCROLL_TIME = 2.2; // seconds from spawn to judgment line
 
 // Timing windows (seconds)
-const T_PERFECT = 0.042;
-const T_GREAT   = 0.084;
-const T_GOOD    = 0.130;
-const T_BAD     = 0.180;
-const T_MISS    = 0.220;
+const T_PERFECT = 0.045;
+const T_GREAT   = 0.090;
+const T_GOOD    = 0.140;
+const T_BAD     = 0.195;
+const T_MISS    = 0.240;
 
-// Lane setup
-const LANE_COLORS = ['#ff44aa', '#00ccff', '#44ff44', '#ffaa00'];
-const LANE_ARROWS = ['←', '↓', '↑', '→'];
-const LANE_KEYS   = ['ArrowLeft', 'ArrowDown', 'ArrowUp', 'ArrowRight'];
-const LANE_GLOW   = ['#ff88cc', '#44eeff', '#88ff88', '#ffcc44'];
+// Obstacle types and corresponding correct keys
+// PYLON_R: pylon on right side -> press LEFT to dodge left
+// PYLON_L: pylon on left side  -> press RIGHT to dodge right
+// ARCH:    overhead arch        -> press DOWN to duck
+// BLOCK:   ground block         -> press UP to jump
+const OBS_TYPES = ['PYLON_R', 'PYLON_L', 'ARCH', 'BLOCK'];
+const OBS_KEYS  = {
+  PYLON_R: 'ArrowLeft',
+  PYLON_L: 'ArrowRight',
+  ARCH:    'ArrowDown',
+  BLOCK:   'ArrowUp'
+};
+const OBS_COLORS = {
+  PYLON_R: '#ff6622',
+  PYLON_L: '#ff6622',
+  ARCH:    '#00ccff',
+  BLOCK:   '#44ff44'
+};
+const OBS_LABELS = {
+  PYLON_R: '← DODGE',
+  PYLON_L: 'DODGE →',
+  ARCH:    '↓ DUCK',
+  BLOCK:   '↑ JUMP'
+};
 
 // Judgment
 const JUDGE_COLORS = {
@@ -54,6 +74,9 @@ const JUDGE_SCORE = { PERFECT: 100, GREAT: 80, GOOD: 50, BAD: 20, MISS: 0 };
 // Health
 const HP_MAX = 100;
 const HP_CHANGE = { PERFECT: 1.0, GREAT: 0.5, GOOD: 0, BAD: -3, MISS: -5 };
+
+// Character action durations
+const ACTION_DUR = 0.35;
 
 // Audio
 const BASS_NOTES = [55, 55, 73.4, 55, 65.4, 55, 73.4, 82.4];
@@ -226,67 +249,68 @@ function scheduleAudio() {
 }
 
 // ============================================================
-// NOTE CHART GENERATOR
+// OBSTACLE CHART GENERATOR
 // ============================================================
 function generateChart() {
-  const notes = [];
+  const obstacles = [];
   const bt = BEAT_S;
 
-  // Pattern sets: arrays of [beatOffset, lane] per bar (4 beats = 1 bar)
+  // Patterns: arrays of [beatOffset, obsTypeIndex] per bar
+  // obsTypeIndex: 0=PYLON_R(←), 1=PYLON_L(→), 2=ARCH(↓), 3=BLOCK(↑)
   const easy = [
-    [[0,0],[2,3]],
-    [[0,2],[2,1]],
-    [[1,0],[3,3]],
-    [[0,1],[2,2]],
-    [[0,0],[1,3],[2,1],[3,2]],
-    [[0,3],[1,0],[2,2],[3,1]],
-    [[0,0],[2,2]],
-    [[0,1],[2,3]],
+    [[0, 3], [2, 2]],
+    [[0, 0], [2, 1]],
+    [[1, 3], [3, 0]],
+    [[0, 2], [2, 3]],
+    [[0, 1], [2, 0]],
+    [[0, 3], [2, 1]],
+    [[0, 0], [2, 2]],
+    [[0, 2], [2, 0]],
   ];
 
   const normal = [
-    [[0,0],[1,1],[2,2],[3,3]],
-    [[0,3],[1,2],[2,1],[3,0]],
-    [[0,0],[0.5,1],[2,2],[2.5,3]],
-    [[0,1],[0.5,0],[2,3],[2.5,2]],
-    [[0,2],[1,0],[2,3],[3,1]],
-    [[0,0],[1,3],[2,1],[3,2]],
-    [[0.5,0],[1.5,1],[2.5,2],[3.5,3]],
-    [[0,0],[0.5,3],[1,1],[1.5,2],[2,0],[3,3]],
-    [[0,2],[0.5,1],[1,3],[2,0],[2.5,1],[3,2]],
-    [[0,0],[1,1],[2,3],[3,2]],
+    [[0, 3], [1, 2], [2, 0], [3, 1]],
+    [[0, 0], [1, 1], [2, 3], [3, 2]],
+    [[0, 2], [1, 3], [2, 1], [3, 0]],
+    [[0, 1], [1, 0], [2, 2], [3, 3]],
+    [[0, 3], [1, 0], [2, 3], [3, 1]],
+    [[0, 0], [1, 2], [2, 1], [3, 3]],
+    [[0, 2], [1, 1], [2, 3], [3, 0]],
+    [[0, 1], [1, 3], [2, 0], [3, 2]],
+    [[0, 3], [1, 1], [2, 0], [3, 2]],
+    [[0, 0], [1, 3], [2, 2], [3, 1]],
   ];
 
   const hard = [
-    [[0,0],[0.5,1],[1,2],[1.5,3],[2,3],[2.5,2],[3,1],[3.5,0]],
-    [[0,0],[0.5,0],[1,3],[1.5,3],[2,1],[2.5,1],[3,2],[3.5,2]],
-    [[0,1],[0.5,2],[1,0],[1.5,3],[2,2],[2.5,1],[3,3],[3.5,0]],
-    [[0,0],[0.5,3],[1,1],[1.5,2],[2,0],[2.5,3],[3,1],[3.5,2]],
-    [[0,2],[0.5,0],[1,3],[1.5,1],[2,0],[2.5,2],[3,1],[3.5,3]],
-    [[0,0],[0.5,1],[1,3],[1.5,2],[2,1],[2.5,0],[3,2],[3.5,3]],
-    [[0,3],[0.5,2],[1,1],[1.5,0],[2,0],[2.5,1],[3,2],[3.5,3]],
-    [[0,0],[0.25,1],[0.5,2],[0.75,3],[2,3],[2.25,2],[2.5,1],[2.75,0]],
+    [[0, 3], [0.5, 2], [1, 0], [1.5, 1], [2, 3], [2.5, 0], [3, 2], [3.5, 1]],
+    [[0, 0], [0.5, 1], [1, 3], [1.5, 2], [2, 1], [2.5, 0], [3, 3], [3.5, 2]],
+    [[0, 2], [0.5, 3], [1, 1], [1.5, 0], [2, 2], [2.5, 1], [3, 0], [3.5, 3]],
+    [[0, 1], [0.5, 0], [1, 2], [1.5, 3], [2, 0], [2.5, 2], [3, 1], [3.5, 3]],
+    [[0, 3], [0.5, 3], [1, 2], [1.5, 2], [2, 0], [2.5, 1], [3, 3], [3.5, 0]],
+    [[0, 0], [0.5, 0], [1, 1], [1.5, 1], [2, 3], [2.5, 2], [3, 0], [3.5, 1]],
+    [[0, 2], [0.5, 0], [1, 3], [1.5, 1], [2, 2], [2.5, 3], [3, 0], [3.5, 1]],
+    [[0, 1], [0.5, 3], [1, 0], [1.5, 2], [2, 1], [2.5, 3], [3, 2], [3.5, 0]],
   ];
 
   const expert = [
-    [[0,0],[0.25,1],[0.5,2],[0.75,3],[1,0],[1.5,2],[2,3],[2.5,1],[3,0],[3.25,1],[3.5,2],[3.75,3]],
-    [[0,3],[0.25,2],[0.5,1],[0.75,0],[1,1],[1.5,3],[2,0],[2.5,2],[3,3],[3.25,2],[3.5,1],[3.75,0]],
-    [[0,0],[0.5,1],[1,2],[1.5,3],[2,0],[2.25,1],[2.5,2],[2.75,3],[3,0],[3.5,3]],
-    [[0,2],[0.5,0],[1,3],[1.5,1],[2,0],[2.5,2],[3,1],[3.25,0],[3.5,3],[3.75,2]],
+    [[0, 3], [0.25, 2], [0.5, 3], [0.75, 0], [1, 1], [1.5, 3], [2, 0], [2.25, 1], [2.5, 2], [2.75, 3], [3, 0], [3.5, 2]],
+    [[0, 0], [0.25, 1], [0.5, 0], [0.75, 3], [1, 2], [1.5, 0], [2, 1], [2.25, 3], [2.5, 2], [2.75, 0], [3, 1], [3.5, 3]],
+    [[0, 2], [0.5, 3], [1, 0], [1.25, 1], [1.5, 2], [1.75, 3], [2, 0], [2.5, 1], [3, 3], [3.25, 2], [3.5, 0], [3.75, 1]],
+    [[0, 3], [0.5, 0], [1, 1], [1.25, 0], [1.5, 3], [1.75, 2], [2, 1], [2.5, 3], [3, 2], [3.25, 0], [3.5, 1], [3.75, 3]],
   ];
 
   for (let bar = 0; bar < SONG_BARS; bar++) {
     let pats, pi;
-    if (bar < 2) continue;
+    if (bar < 2) continue; // intro
     else if (bar < 10) { pats = easy;   pi = (bar - 2) % easy.length; }
     else if (bar < 22) { pats = normal; pi = (bar - 10) % normal.length; }
     else if (bar < 38) { pats = hard;   pi = (bar - 22) % hard.length; }
     else               { pats = expert; pi = (bar - 38) % expert.length; }
 
-    for (const [bOff, lane] of pats[pi]) {
-      notes.push({
+    for (const [bOff, typeIdx] of pats[pi]) {
+      obstacles.push({
         time: (bar * 4 + bOff) * bt,
-        lane,
+        type: OBS_TYPES[typeIdx],
         judged: false,
         judgment: null,
         hitTime: 0
@@ -294,15 +318,15 @@ function generateChart() {
     }
   }
 
-  notes.sort((a, b) => a.time - b.time);
-  return notes;
+  obstacles.sort((a, b) => a.time - b.time);
+  return obstacles;
 }
 
 // ============================================================
 // GAME STATE
 // ============================================================
 let gameState = 'START';
-let notes = [];
+let obstacles = [];
 let score = 0, combo = 0, maxCombo = 0;
 let health = HP_MAX;
 let judgeCounts = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
@@ -313,7 +337,14 @@ let dt = 0, lastTime = 0;
 let particles = [];
 let roadScroll = 0;
 let charPhase = 0;
-let laneFlash = [0, 0, 0, 0]; // per-lane flash when pressed
+
+// Character action state
+let charAction = 'RUN';   // RUN, DODGE_L, DODGE_R, DUCK, JUMP
+let charActionTimer = 0;
+let charJumpY = 0;        // vertical offset for jump
+
+// Key flash state per direction
+let keyFlash = { ArrowLeft: 0, ArrowRight: 0, ArrowDown: 0, ArrowUp: 0 };
 
 // ============================================================
 // PERSPECTIVE MATH
@@ -325,12 +356,6 @@ function zToScreen(wz) {
     hw: ROAD_HW * t,
     t
   };
-}
-
-function laneX(lane, wz) {
-  const s = zToScreen(wz);
-  const lw = s.hw * 2 / NUM_LANES;
-  return VX - s.hw + (lane + 0.5) * lw;
 }
 
 // ============================================================
@@ -352,13 +377,13 @@ function spawnPart(x, y, color, count) {
   }
 }
 
-function updatePart(dt) {
+function updatePart(deltaT) {
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
-    p.vy += 400 * dt;
-    p.life -= dt;
+    p.x += p.vx * deltaT;
+    p.y += p.vy * deltaT;
+    p.vy += 400 * deltaT;
+    p.life -= deltaT;
     if (p.life <= 0) particles.splice(i, 1);
   }
 }
@@ -397,10 +422,9 @@ window.addEventListener('keydown', (e) => {
   } else if ((gameState === 'GAMEOVER' || gameState === 'RESULT') && (e.code === 'KeyR' || e.code === 'Space')) {
     resetToStart();
   } else if (gameState === 'PLAYING') {
-    const li = LANE_KEYS.indexOf(e.code);
-    if (li >= 0 && justPressed[e.code]) {
-      judgeKeyPress(li);
-      laneFlash[li] = 1.0;
+    if (justPressed[e.code] && ['ArrowLeft','ArrowRight','ArrowDown','ArrowUp'].includes(e.code)) {
+      judgeKeyPress(e.code);
+      keyFlash[e.code] = 1.0;
     }
   }
 });
@@ -415,16 +439,18 @@ function musicTime() {
   return audioCtx.currentTime - gameStartTime;
 }
 
-function judgeKeyPress(lane) {
+function judgeKeyPress(keyCode) {
   const now = musicTime();
   let best = null, bestDiff = Infinity;
 
-  for (const n of notes) {
-    if (n.judged || n.lane !== lane) continue;
-    const diff = Math.abs(n.time - now);
+  for (const o of obstacles) {
+    if (o.judged) continue;
+    // Only match obstacles whose correct key matches the pressed key
+    if (OBS_KEYS[o.type] !== keyCode) continue;
+    const diff = Math.abs(o.time - now);
     if (diff < bestDiff && diff < T_MISS) {
       bestDiff = diff;
-      best = n;
+      best = o;
     }
   }
 
@@ -456,10 +482,14 @@ function judgeKeyPress(lane) {
   lastJudge = j;
   judgeTimer = 0.5;
 
+  // Set character action
+  if (keyCode === 'ArrowLeft')  { charAction = 'DODGE_L'; charActionTimer = ACTION_DUR; }
+  if (keyCode === 'ArrowRight') { charAction = 'DODGE_R'; charActionTimer = ACTION_DUR; }
+  if (keyCode === 'ArrowDown')  { charAction = 'DUCK';    charActionTimer = ACTION_DUR; }
+  if (keyCode === 'ArrowUp')    { charAction = 'JUMP';    charActionTimer = ACTION_DUR; charJumpY = 0; }
+
   // FX
-  const sx = laneX(lane, 1.0);
-  const sy = zToScreen(1.0).y;
-  spawnPart(sx, sy, LANE_COLORS[lane], j === 'PERFECT' ? 20 : j === 'GREAT' ? 14 : 8);
+  spawnPart(VX, ROAD_BOTTOM, JUDGE_COLORS[j], j === 'PERFECT' ? 20 : j === 'GREAT' ? 14 : 8);
 
   if (audioCtx) {
     const t = audioCtx.currentTime;
@@ -472,16 +502,17 @@ function judgeKeyPress(lane) {
 
 function processAutoMisses() {
   const now = musicTime();
-  for (const n of notes) {
-    if (n.judged) continue;
-    if (now > n.time + T_MISS) {
-      n.judged = true;
-      n.judgment = 'MISS';
+  for (const o of obstacles) {
+    if (o.judged) continue;
+    if (now > o.time + T_MISS) {
+      o.judged = true;
+      o.judgment = 'MISS';
       judgeCounts.MISS++;
       combo = 0;
       health = Math.max(0, health + HP_CHANGE.MISS);
       lastJudge = 'MISS';
       judgeTimer = 0.35;
+      if (audioCtx) sfxMiss(audioCtx.currentTime);
       updateAccuracy();
     }
   }
@@ -505,7 +536,22 @@ function update(deltaT) {
 
   beatFlash = Math.max(0, beatFlash - deltaT * 4);
   judgeTimer = Math.max(0, judgeTimer - deltaT);
-  for (let i = 0; i < 4; i++) laneFlash[i] = Math.max(0, laneFlash[i] - deltaT * 6);
+  for (const k in keyFlash) keyFlash[k] = Math.max(0, keyFlash[k] - deltaT * 5);
+
+  // Character action timer
+  if (charActionTimer > 0) {
+    charActionTimer -= deltaT;
+    if (charAction === 'JUMP') {
+      // Parabolic jump: rises then falls
+      const t = 1 - (charActionTimer / ACTION_DUR);
+      charJumpY = Math.sin(t * Math.PI) * 55;
+    }
+    if (charActionTimer <= 0) {
+      charAction = 'RUN';
+      charActionTimer = 0;
+      charJumpY = 0;
+    }
+  }
 
   updatePart(deltaT);
 
@@ -518,8 +564,8 @@ function update(deltaT) {
   }
 
   const now = musicTime();
-  const allDone = notes.length > 0 && notes.every(n => n.judged);
-  if (allDone && now > notes[notes.length - 1].time + 2.5) {
+  const allDone = obstacles.length > 0 && obstacles.every(o => o.judged);
+  if (allDone && now > obstacles[obstacles.length - 1].time + 2.5) {
     gameState = 'RESULT';
   }
 }
@@ -533,7 +579,6 @@ function pseudoRand(n) {
 }
 
 function drawBg() {
-  // Sky gradient
   const g = ctx.createLinearGradient(0, 0, 0, VY + 60);
   g.addColorStop(0, '#05000d');
   g.addColorStop(0.6, '#0a0020');
@@ -555,7 +600,7 @@ function drawBg() {
   }
   ctx.restore();
 
-  // Ground fill
+  // Ground
   const gg = ctx.createLinearGradient(0, VY, 0, H);
   gg.addColorStop(0, '#030308');
   gg.addColorStop(1, '#020206');
@@ -572,7 +617,7 @@ function drawBg() {
 }
 
 // ============================================================
-// RENDERING: Track
+// RENDERING: Track (wide multi-lane road, R2BEAT style)
 // ============================================================
 function drawTrack() {
   // Road surface
@@ -586,8 +631,8 @@ function drawTrack() {
   ctx.lineTo(br, ROAD_BOTTOM);
   ctx.closePath();
   const rg = ctx.createLinearGradient(VX, VY, VX, H);
-  rg.addColorStop(0, '#08080f');
-  rg.addColorStop(1, '#0c0c18');
+  rg.addColorStop(0, '#0a0a14');
+  rg.addColorStop(1, '#0e0e1c');
   ctx.fillStyle = rg;
   ctx.fill();
   ctx.restore();
@@ -599,7 +644,7 @@ function drawTrack() {
     const z = (i + roadScroll) / NUM_LINES;
     const s = zToScreen(z);
     if (s.t < 0.005) continue;
-    const alpha = Math.min(1, s.t * 1.5) * 0.25;
+    const alpha = Math.min(1, s.t * 1.5) * 0.2;
     ctx.strokeStyle = `rgba(50,80,140,${alpha})`;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -609,12 +654,13 @@ function drawTrack() {
   }
   ctx.restore();
 
-  // Lane dividers
+  // Lane divider lines (6 lanes visible for the wide road look)
   ctx.save();
-  for (let i = 1; i < NUM_LANES; i++) {
-    const wx = -0.5 + i / NUM_LANES;
+  const NUM_VISIBLE_LANES = 6;
+  for (let i = 1; i < NUM_VISIBLE_LANES; i++) {
+    const wx = -0.5 + i / NUM_VISIBLE_LANES;
     const nearX = VX + wx * ROAD_HW * 2;
-    ctx.strokeStyle = 'rgba(60,100,180,0.35)';
+    ctx.strokeStyle = 'rgba(60,100,180,0.3)';
     ctx.lineWidth = 1;
     ctx.setLineDash([6, 10]);
     ctx.beginPath();
@@ -635,8 +681,11 @@ function drawTrack() {
   ctx.beginPath(); ctx.moveTo(VX, VY); ctx.lineTo(VX + ROAD_HW, ROAD_BOTTOM); ctx.stroke();
   ctx.restore();
 
-  // Side barriers
+  // Side barriers with lights
   drawSideBarriers();
+
+  // Center lane highlight (subtle glow on the center "active" lane)
+  drawCenterLaneGlow();
 }
 
 function drawSideBarriers() {
@@ -644,23 +693,22 @@ function drawSideBarriers() {
   ctx.save();
   for (let side = -1; side <= 1; side += 2) {
     for (let i = 0; i < NUM_POSTS; i++) {
-      let z = (i + roadScroll) / NUM_POSTS;
+      const z = (i + roadScroll) / NUM_POSTS;
       const s = zToScreen(z);
       if (s.t < 0.01) continue;
       const x = VX + side * (s.hw + 8 * s.t);
       const h = 25 * s.t;
       const alpha = Math.min(1, s.t * 2) * 0.6;
 
-      // Post
       ctx.fillStyle = `rgba(40,60,120,${alpha})`;
       ctx.fillRect(x - 2 * s.t, s.y - h, 4 * s.t, h);
 
-      // Light on top
-      ctx.fillStyle = `rgba(0,180,255,${alpha * 0.8})`;
-      ctx.shadowColor = '#00aaff';
-      ctx.shadowBlur = 8 * s.t;
+      // Yellow light on top (like R2BEAT road lights)
+      ctx.fillStyle = `rgba(255,200,50,${alpha * 0.9})`;
+      ctx.shadowColor = '#ffcc33';
+      ctx.shadowBlur = 10 * s.t;
       ctx.beginPath();
-      ctx.arc(x, s.y - h, 3 * s.t, 0, Math.PI * 2);
+      ctx.arc(x, s.y - h, 3.5 * s.t, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
     }
@@ -668,185 +716,280 @@ function drawSideBarriers() {
   ctx.restore();
 }
 
-// ============================================================
-// RENDERING: Judgment Line
-// ============================================================
-function drawJudgeLine() {
-  const s = zToScreen(1.0);
-  const y = s.y;
-  const lx = VX - s.hw;
-  const rx = VX + s.hw;
-
+function drawCenterLaneGlow() {
+  // Subtle glow on the center portion of the road
   ctx.save();
-  // Glow line
-  const pulse = 0.7 + 0.3 * Math.sin(performance.now() / 1000 * 4);
-  ctx.shadowColor = '#00ccff';
-  ctx.shadowBlur = 18 * pulse;
-  ctx.strokeStyle = `rgba(0,200,255,${0.6 * pulse})`;
-  ctx.lineWidth = 3;
+  const gw = 60; // glow width at bottom
+  const grad = ctx.createLinearGradient(VX - gw, 0, VX + gw, 0);
+  grad.addColorStop(0, 'rgba(0,150,255,0)');
+  grad.addColorStop(0.3, 'rgba(0,150,255,0.04)');
+  grad.addColorStop(0.5, 'rgba(0,150,255,0.07)');
+  grad.addColorStop(0.7, 'rgba(0,150,255,0.04)');
+  grad.addColorStop(1, 'rgba(0,150,255,0)');
+  ctx.fillStyle = grad;
+  // Draw from vanishing point to bottom
   ctx.beginPath();
-  ctx.moveTo(lx, y);
-  ctx.lineTo(rx, y);
-  ctx.stroke();
-
-  // Lane receptor markers
-  for (let i = 0; i < NUM_LANES; i++) {
-    const x = laneX(i, 1.0);
-    const flash = laneFlash[i];
-    const baseAlpha = 0.3 + flash * 0.7;
-    const size = 22 + flash * 8;
-
-    ctx.shadowColor = LANE_COLORS[i];
-    ctx.shadowBlur = 10 + flash * 20;
-
-    // Outer ring
-    ctx.strokeStyle = LANE_COLORS[i];
-    ctx.globalAlpha = baseAlpha;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(x, y, size, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Inner fill on flash
-    if (flash > 0.1) {
-      ctx.fillStyle = LANE_COLORS[i];
-      ctx.globalAlpha = flash * 0.3;
-      ctx.beginPath();
-      ctx.arc(x, y, size - 4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Arrow label
-    ctx.globalAlpha = baseAlpha * 0.8;
-    ctx.fillStyle = LANE_COLORS[i];
-    ctx.shadowBlur = 0;
-    ctx.font = `bold ${16}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(LANE_ARROWS[i], x, y);
-    ctx.globalAlpha = 1;
-  }
+  ctx.moveTo(VX - 3, VY);
+  ctx.lineTo(VX - gw, ROAD_BOTTOM);
+  ctx.lineTo(VX + gw, ROAD_BOTTOM);
+  ctx.lineTo(VX + 3, VY);
+  ctx.closePath();
+  ctx.fill();
   ctx.restore();
 }
 
 // ============================================================
-// RENDERING: Notes
+// RENDERING: Judgment Zone marker
 // ============================================================
-function drawNotes() {
+function drawJudgeZone() {
+  const s = zToScreen(1.0);
+  const y = s.y;
+
+  ctx.save();
+  const pulse = 0.7 + 0.3 * Math.sin(performance.now() / 1000 * 4);
+
+  // Horizontal glow line across the road
+  ctx.shadowColor = '#00ccff';
+  ctx.shadowBlur = 18 * pulse;
+  ctx.strokeStyle = `rgba(0,200,255,${0.5 * pulse})`;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(VX - s.hw, y);
+  ctx.lineTo(VX + s.hw, y);
+  ctx.stroke();
+
+  // Center "judgment" indicator - a pulsing circle at center
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur = 15 * pulse;
+  ctx.strokeStyle = `rgba(0,255,200,${0.4 * pulse})`;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(VX, y, 28, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: Obstacles
+// ============================================================
+function drawObstacles() {
   const now = musicTime();
 
-  // Sort far to near
+  // Collect visible obstacles
   const visible = [];
-  for (const n of notes) {
-    const z = 1.0 - (n.time - now) / NOTE_SCROLL_TIME;
-    if (z < -0.05 || z > 1.25) continue;
-    if (n.judged && n.judgment !== 'MISS') continue; // hit notes disappear
-    visible.push({ note: n, z });
+  for (const o of obstacles) {
+    const z = 1.0 - (o.time - now) / OBS_SCROLL_TIME;
+    if (z < -0.02 || z > 1.3) continue;
+    if (o.judged && o.judgment !== 'MISS') continue;
+    visible.push({ obs: o, z });
   }
   visible.sort((a, b) => a.z - b.z);
 
-  for (const { note: n, z } of visible) {
-    if (z < 0.01) continue;
+  for (const { obs: o, z } of visible) {
+    if (z < 0.02) continue;
     const s = zToScreen(z);
-    const x = laneX(n.lane, z);
     const y = s.y;
     const scale = s.t;
-    const noteSize = 20 * scale + 4;
 
-    ctx.save();
-
-    if (n.judged && n.judgment === 'MISS') {
-      // Missed notes fade to grey
+    // Alpha: fade in from far, dim if missed
+    let alpha = Math.min(1, z * 3);
+    if (o.judged && o.judgment === 'MISS') {
       const fadeZ = z - 1.0;
-      const alpha = Math.max(0, 1 - fadeZ * 5);
-      ctx.globalAlpha = alpha * 0.4;
-      ctx.fillStyle = '#555';
-      ctx.beginPath();
-      ctx.arc(x, y, noteSize * 0.8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-      continue;
+      alpha = Math.max(0, 1 - fadeZ * 4) * 0.35;
     }
 
-    const col = LANE_COLORS[n.lane];
-    const glow = LANE_GLOW[n.lane];
+    ctx.save();
+    ctx.globalAlpha = alpha;
 
-    // Glow ring
-    ctx.shadowColor = glow;
-    ctx.shadowBlur = 15 * scale;
+    const col = o.judged && o.judgment === 'MISS' ? '#555' : OBS_COLORS[o.type];
 
-    // Near-judge-line brightness boost
-    const nearBoost = z > 0.8 ? (z - 0.8) * 5 : 0;
+    if (o.type === 'PYLON_R') {
+      drawPylon(VX + 40 * scale, y, scale, col, false);
+    } else if (o.type === 'PYLON_L') {
+      drawPylon(VX - 40 * scale, y, scale, col, true);
+    } else if (o.type === 'ARCH') {
+      drawArch(VX, y, scale, col);
+    } else if (o.type === 'BLOCK') {
+      drawBlock(VX, y, scale, col);
+    }
 
-    // Outer glow disc
-    ctx.globalAlpha = (0.15 + nearBoost * 0.15) * Math.min(1, z * 3);
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(x, y, noteSize * 1.6, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Main note body
-    ctx.globalAlpha = Math.min(1, z * 3);
-    ctx.fillStyle = col;
-    ctx.shadowBlur = 12 * scale;
-    ctx.beginPath();
-    ctx.arc(x, y, noteSize, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Inner bright core
-    ctx.fillStyle = '#fff';
-    ctx.globalAlpha = (0.3 + nearBoost * 0.3) * Math.min(1, z * 3);
-    ctx.beginPath();
-    ctx.arc(x, y, noteSize * 0.55, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Arrow text
-    ctx.globalAlpha = Math.min(1, z * 4);
-    ctx.fillStyle = '#fff';
-    ctx.shadowBlur = 0;
-    ctx.font = `bold ${Math.max(8, Math.round(14 * scale + 4))}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(LANE_ARROWS[n.lane], x, y);
+    // Near-judgment-line boost glow
+    if (!o.judged && z > 0.8) {
+      const boost = (z - 0.8) * 5;
+      ctx.shadowColor = col;
+      ctx.shadowBlur = 20 * boost;
+      ctx.fillStyle = col;
+      ctx.globalAlpha = boost * 0.15;
+      ctx.beginPath();
+      ctx.arc(VX, y, 35 * scale, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     ctx.restore();
   }
 }
 
-// ============================================================
-// RENDERING: Character
-// ============================================================
-function drawCharacter() {
-  const cx = VX;
-  const baseY = ROAD_BOTTOM + 25;
-  const phase = charPhase;
-
-  // Running bounce
-  const bounce = Math.abs(Math.sin(phase)) * 3;
-  const legSwing = Math.sin(phase) * 12;
+function drawPylon(x, y, scale, color, isLeft) {
+  // Traffic cone / pylon shape
+  const w = 14 * scale;
+  const h = 35 * scale;
 
   ctx.save();
-  ctx.translate(cx, baseY - bounce);
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 8 * scale;
 
-  const sc = 0.9;
-  ctx.scale(sc, sc);
+  // Cone body (trapezoid)
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x - w, y);
+  ctx.lineTo(x + w, y);
+  ctx.lineTo(x + w * 0.4, y - h);
+  ctx.lineTo(x - w * 0.4, y - h);
+  ctx.closePath();
+  ctx.fill();
+
+  // White stripes
+  ctx.fillStyle = '#fff';
+  ctx.globalAlpha = 0.7;
+  const stripeH = h * 0.15;
+  ctx.fillRect(x - w * 0.85, y - h * 0.35, w * 1.7, stripeH);
+  ctx.fillRect(x - w * 0.65, y - h * 0.65, w * 1.3, stripeH);
+  ctx.globalAlpha = 1;
+
+  // Arrow indicator showing which key to press
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.max(10, Math.round(16 * scale))}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowBlur = 0;
+  ctx.fillText(isLeft ? '→' : '←', x, y - h - 8 * scale);
+
+  ctx.restore();
+}
+
+function drawArch(x, y, scale, color) {
+  // Arch / gate shape - overhead obstacle
+  const w = 50 * scale;
+  const h = 45 * scale;
+  const postW = 6 * scale;
+
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10 * scale;
+
+  // Left post
+  ctx.fillStyle = color;
+  ctx.fillRect(x - w - postW, y - h, postW, h);
+  // Right post
+  ctx.fillRect(x + w, y - h, postW, h);
+  // Top bar
+  ctx.fillRect(x - w - postW, y - h - postW, w * 2 + postW * 2, postW);
+
+  // Glow effect on top bar
+  ctx.globalAlpha = 0.4;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(x - w - postW, y - h - postW, w * 2 + postW * 2, postW * 0.5);
+  ctx.globalAlpha = 1;
+
+  // Arrow indicator
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.max(10, Math.round(16 * scale))}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowBlur = 0;
+  ctx.fillText('↓', x, y - h - postW - 10 * scale);
+
+  ctx.restore();
+}
+
+function drawBlock(x, y, scale, color) {
+  // Ground block - low obstacle to jump over
+  const w = 35 * scale;
+  const h = 18 * scale;
+
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 8 * scale;
+
+  // Block body
+  ctx.fillStyle = color;
+  ctx.fillRect(x - w, y - h, w * 2, h);
+
+  // Top face (lighter)
+  ctx.fillStyle = '#88ff88';
+  ctx.globalAlpha = 0.4;
+  ctx.fillRect(x - w, y - h, w * 2, h * 0.3);
+  ctx.globalAlpha = 1;
+
+  // Side highlight
+  ctx.strokeStyle = '#fff';
+  ctx.globalAlpha = 0.3;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x - w, y - h, w * 2, h);
+  ctx.globalAlpha = 1;
+
+  // Arrow indicator
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.max(10, Math.round(16 * scale))}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowBlur = 0;
+  ctx.fillText('↑', x, y - h - 10 * scale);
+
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: Character (back view, R2BEAT-style anime runner)
+// ============================================================
+function drawCharacter() {
+  const baseY = ROAD_BOTTOM + 30;
+  const phase = charPhase;
+
+  // Calculate character position based on action
+  let cx = VX;
+  let cy = baseY;
+  let scaleY = 1.0;
+
+  if (charAction === 'DODGE_L') {
+    const t = 1 - (charActionTimer / ACTION_DUR);
+    const sway = Math.sin(t * Math.PI) * 50;
+    cx = VX - sway;
+  } else if (charAction === 'DODGE_R') {
+    const t = 1 - (charActionTimer / ACTION_DUR);
+    const sway = Math.sin(t * Math.PI) * 50;
+    cx = VX + sway;
+  } else if (charAction === 'DUCK') {
+    scaleY = 0.5;
+  } else if (charAction === 'JUMP') {
+    cy = baseY - charJumpY;
+  }
+
+  // Running bounce (only while running)
+  const isRunning = charAction === 'RUN';
+  const bounce = isRunning ? Math.abs(Math.sin(phase)) * 3 : 0;
+  const legSwing = isRunning ? Math.sin(phase) * 12 : 0;
+
+  ctx.save();
+  ctx.translate(cx, cy - bounce);
+
+  const sc = 0.95;
+  ctx.scale(sc, sc * scaleY);
 
   // Shadow on ground
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.beginPath();
-  ctx.ellipse(0, 28 + bounce, 18, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 28 + bounce, 20, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // Legs
   ctx.strokeStyle = '#f0c8a0';
   ctx.lineWidth = 5;
   ctx.lineCap = 'round';
-  // Left leg
   ctx.beginPath();
   ctx.moveTo(-6, 12);
   ctx.lineTo(-6 - legSwing * 0.4, 26);
   ctx.stroke();
-  // Right leg
   ctx.beginPath();
   ctx.moveTo(6, 12);
   ctx.lineTo(6 + legSwing * 0.4, 26);
@@ -855,81 +998,84 @@ function drawCharacter() {
   // Shoes
   ctx.fillStyle = '#222';
   ctx.beginPath();
-  ctx.ellipse(-6 - legSwing * 0.4, 27, 4, 2.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(-6 - legSwing * 0.4, 27, 5, 3, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.ellipse(6 + legSwing * 0.4, 27, 4, 2.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(6 + legSwing * 0.4, 27, 5, 3, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Body (shirt - white with red trim, like R2BEAT uniform)
+  // Body (white shirt with red trim)
   ctx.fillStyle = '#eee';
   ctx.beginPath();
-  ctx.moveTo(-12, -6);
-  ctx.lineTo(12, -6);
-  ctx.lineTo(10, 14);
-  ctx.lineTo(-10, 14);
+  ctx.moveTo(-13, -6);
+  ctx.lineTo(13, -6);
+  ctx.lineTo(11, 14);
+  ctx.lineTo(-11, 14);
   ctx.closePath();
   ctx.fill();
+
   // Red collar accent
   ctx.strokeStyle = '#cc2244';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2.5;
   ctx.beginPath();
-  ctx.moveTo(-8, -6);
+  ctx.moveTo(-9, -6);
   ctx.lineTo(0, -2);
-  ctx.lineTo(8, -6);
+  ctx.lineTo(9, -6);
   ctx.stroke();
 
+  // Skirt / bottom trim
+  ctx.fillStyle = '#cc2244';
+  ctx.fillRect(-11, 10, 22, 4);
+
   // Arms
-  const armSwing = Math.sin(phase + Math.PI) * 10;
+  const armSwing = isRunning ? Math.sin(phase + Math.PI) * 10 : 0;
   ctx.strokeStyle = '#eee';
   ctx.lineWidth = 4;
   ctx.lineCap = 'round';
-  // Left arm
   ctx.beginPath();
-  ctx.moveTo(-12, -2);
-  ctx.lineTo(-14 - armSwing * 0.3, 10);
+  ctx.moveTo(-13, -2);
+  ctx.lineTo(-15 - armSwing * 0.3, 10);
   ctx.stroke();
-  // Right arm
   ctx.beginPath();
-  ctx.moveTo(12, -2);
-  ctx.lineTo(14 + armSwing * 0.3, 10);
+  ctx.moveTo(13, -2);
+  ctx.lineTo(15 + armSwing * 0.3, 10);
   ctx.stroke();
 
   // Hands
   ctx.fillStyle = '#f0c8a0';
   ctx.beginPath();
-  ctx.arc(-14 - armSwing * 0.3, 11, 2.5, 0, Math.PI * 2);
+  ctx.arc(-15 - armSwing * 0.3, 11, 2.5, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.arc(14 + armSwing * 0.3, 11, 2.5, 0, Math.PI * 2);
+  ctx.arc(15 + armSwing * 0.3, 11, 2.5, 0, Math.PI * 2);
   ctx.fill();
 
   // Head
   ctx.fillStyle = '#f5d0b0';
   ctx.beginPath();
-  ctx.arc(0, -16, 10, 0, Math.PI * 2);
+  ctx.arc(0, -17, 11, 0, Math.PI * 2);
   ctx.fill();
 
-  // Hair (dark brown, back view - covers top and sides)
+  // Hair (dark brown, back view)
   ctx.fillStyle = '#3a2211';
   ctx.beginPath();
-  ctx.arc(0, -18, 11, Math.PI * 0.9, Math.PI * 2.1);
-  ctx.lineTo(11, -14);
-  ctx.quadraticCurveTo(12, -8, 10, -6);
-  ctx.lineTo(-10, -6);
-  ctx.quadraticCurveTo(-12, -8, -11, -14);
+  ctx.arc(0, -19, 12, Math.PI * 0.85, Math.PI * 2.15);
+  ctx.lineTo(12, -15);
+  ctx.quadraticCurveTo(13, -8, 11, -6);
+  ctx.lineTo(-11, -6);
+  ctx.quadraticCurveTo(-13, -8, -12, -15);
   ctx.closePath();
   ctx.fill();
 
-  // Hair spikes on top
+  // Hair spikes
   ctx.beginPath();
-  ctx.moveTo(-6, -27);
-  ctx.lineTo(-2, -22);
-  ctx.lineTo(0, -30);
-  ctx.lineTo(3, -22);
-  ctx.lineTo(7, -28);
-  ctx.lineTo(5, -20);
-  ctx.lineTo(-5, -20);
+  ctx.moveTo(-7, -29);
+  ctx.lineTo(-3, -23);
+  ctx.lineTo(0, -32);
+  ctx.lineTo(4, -23);
+  ctx.lineTo(8, -30);
+  ctx.lineTo(6, -21);
+  ctx.lineTo(-6, -21);
   ctx.closePath();
   ctx.fill();
 
@@ -967,7 +1113,7 @@ function drawHUD() {
 
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#ffcc00';
-    ctx.font = `bold 20px sans-serif`;
+    ctx.font = 'bold 20px sans-serif';
     ctx.fillText('COMBO', 0, comboSize / 2 + 14);
 
     ctx.restore();
@@ -980,7 +1126,7 @@ function drawHUD() {
   ctx.font = 'bold 22px sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'top';
-  ctx.fillText(`${score}`, W - 25, 18);
+  ctx.fillText(String(score), W - 25, 18);
   ctx.font = '12px sans-serif';
   ctx.fillStyle = 'rgba(100,200,255,0.7)';
   ctx.fillText('SCORE', W - 25, 44);
@@ -993,9 +1139,8 @@ function drawHUD() {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.font = 'bold 16px sans-serif';
-
   ctx.fillStyle = '#00ddff';
-  ctx.fillText(`判定 ${accuracy.toFixed(1)}%`, 18, 20);
+  ctx.fillText('\u5224\u5B9A ' + accuracy.toFixed(1) + '%', 18, 20);
 
   const stats = [
     ['PERFECT', judgeCounts.PERFECT, JUDGE_COLORS.PERFECT],
@@ -1005,15 +1150,15 @@ function drawHUD() {
     ['MISS',    judgeCounts.MISS,    JUDGE_COLORS.MISS],
   ];
   ctx.font = '12px sans-serif';
-  stats.forEach(([label, cnt, col], idx) => {
-    ctx.fillStyle = col;
+  stats.forEach(function(entry, idx) {
+    ctx.fillStyle = entry[2];
     ctx.globalAlpha = 0.85;
-    ctx.fillText(`${label}`, 18, 44 + idx * 18);
-    ctx.fillText(`${cnt}`, 85, 44 + idx * 18);
+    ctx.fillText(entry[0], 18, 44 + idx * 18);
+    ctx.fillText(String(entry[1]), 85, 44 + idx * 18);
   });
   ctx.globalAlpha = 1;
 
-  // ---- Health bar (bottom, horizontal) ----
+  // ---- Health bar (bottom) ----
   const hbX = VX - 150, hbY = H - 20, hbW = 300, hbH = 8;
   ctx.fillStyle = 'rgba(30,30,60,0.7)';
   ctx.fillRect(hbX, hbY, hbW, hbH);
@@ -1025,24 +1170,68 @@ function drawHUD() {
   ctx.lineWidth = 1;
   ctx.strokeRect(hbX, hbY, hbW, hbH);
 
-  // Health label
   ctx.fillStyle = 'rgba(200,220,255,0.6)';
   ctx.font = '10px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('LIFE', VX, H - 24);
 
-  // ---- BPM (bottom-left) ----
+  // ---- Controls hint (bottom corners) ----
   ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(100,200,255,0.5)';
+  ctx.fillStyle = 'rgba(100,200,255,0.4)';
   ctx.font = '11px sans-serif';
-  ctx.fillText(`BPM ${BPM}`, 18, H - 16);
+  ctx.fillText('BPM ' + BPM, 18, H - 16);
 
-  // ---- Progress bar (bottom, thin) ----
+  // ---- Progress bar ----
   const now = musicTime();
   const prog = Math.min(1, now / SONG_DURATION);
   ctx.fillStyle = 'rgba(0,150,255,0.3)';
   ctx.fillRect(0, H - 3, W * prog, 3);
 
+  // ---- Key indicators at bottom ----
+  drawKeyIndicators();
+
+  ctx.restore();
+}
+
+function drawKeyIndicators() {
+  const indicators = [
+    { key: 'ArrowLeft',  label: '←', x: VX - 120, color: '#ff6622' },
+    { key: 'ArrowDown',  label: '↓', x: VX - 40,  color: '#00ccff' },
+    { key: 'ArrowUp',    label: '↑', x: VX + 40,  color: '#44ff44' },
+    { key: 'ArrowRight', label: '→', x: VX + 120, color: '#ff6622' },
+  ];
+  const y = H - 50;
+  const size = 20;
+
+  ctx.save();
+  for (const ind of indicators) {
+    const flash = keyFlash[ind.key] || 0;
+    const alpha = 0.3 + flash * 0.7;
+
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = ind.color;
+    ctx.shadowColor = ind.color;
+    ctx.shadowBlur = flash * 15;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(ind.x - size, y - size, size * 2, size * 2, 5);
+    ctx.stroke();
+
+    if (flash > 0.1) {
+      ctx.fillStyle = ind.color;
+      ctx.globalAlpha = flash * 0.25;
+      ctx.fill();
+    }
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#fff';
+    ctx.shadowBlur = 0;
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ind.label, ind.x, y);
+  }
+  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
@@ -1052,14 +1241,12 @@ function drawAccuracyGauge(cx, cy, r) {
   const endAngle = Math.PI * 0.75;
   const totalArc = endAngle - startAngle;
 
-  // Background arc
   ctx.strokeStyle = 'rgba(40,50,80,0.6)';
   ctx.lineWidth = 6;
   ctx.beginPath();
   ctx.arc(cx, cy, r, startAngle, endAngle);
   ctx.stroke();
 
-  // Filled arc
   const frac = accuracy / 100;
   const col = frac > 0.9 ? '#44ff88' : frac > 0.7 ? '#ffcc00' : '#ff4444';
   ctx.strokeStyle = col;
@@ -1071,13 +1258,12 @@ function drawAccuracyGauge(cx, cy, r) {
   ctx.arc(cx, cy, r, startAngle, startAngle + totalArc * frac);
   ctx.stroke();
 
-  // Percentage text
   ctx.shadowBlur = 0;
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 14px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(`${accuracy.toFixed(1)}%`, cx, cy);
+  ctx.fillText(accuracy.toFixed(1) + '%', cx, cy);
 
   ctx.font = '9px sans-serif';
   ctx.fillStyle = 'rgba(180,200,255,0.6)';
@@ -1097,14 +1283,14 @@ function drawJudgePopup() {
   const scale = 1 + (1 - t) * 0.3;
   const alpha = Math.min(1, t * 2);
 
-  ctx.translate(VX, ROAD_BOTTOM - 60);
+  ctx.translate(VX, ROAD_BOTTOM - 70);
   ctx.scale(scale, scale);
   ctx.globalAlpha = alpha;
 
   ctx.shadowColor = JUDGE_COLORS[lastJudge];
   ctx.shadowBlur = 20;
   ctx.fillStyle = JUDGE_COLORS[lastJudge];
-  ctx.font = `bold 32px 'Impact', sans-serif`;
+  ctx.font = "bold 34px 'Impact', sans-serif";
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(lastJudge, 0, 0);
@@ -1126,48 +1312,58 @@ function drawStartScreen() {
   // Title
   ctx.shadowColor = '#00ffcc';
   ctx.shadowBlur = 30 * pulse;
-  ctx.font = `bold 100px 'Impact', sans-serif`;
-  ctx.fillStyle = `rgba(0,255,200,${pulse})`;
-  ctx.fillText('RRBe', VX, H / 2 - 120);
+  ctx.font = "bold 100px 'Impact', sans-serif";
+  ctx.fillStyle = 'rgba(0,255,200,' + pulse + ')';
+  ctx.fillText('RRBe', VX, H / 2 - 130);
 
   // Subtitle
   ctx.shadowColor = '#8844ff';
   ctx.shadowBlur = 15;
-  ctx.font = `bold 22px sans-serif`;
+  ctx.font = 'bold 22px sans-serif';
   ctx.fillStyle = '#cc88ff';
-  ctx.fillText('RACE & RHYTHM BEAT', VX, H / 2 - 55);
+  ctx.fillText('RACE & RHYTHM BEAT', VX, H / 2 - 65);
 
   // Controls
   ctx.shadowBlur = 0;
   ctx.font = '15px sans-serif';
-  ctx.fillStyle = 'rgba(150,220,255,0.8)';
+  ctx.fillStyle = 'rgba(150,220,255,0.85)';
   const lines = [
-    '← ↓ ↑ →  : Hit notes with matching arrow keys',
-    'Match the timing when notes reach the judgment line!',
-    'PERFECT → GREAT → GOOD → BAD → MISS',
-    ''
+    'Obstacles rush toward you — dodge them to the beat!',
+    '',
+    '\uD83D\uDEA7 Pylon on RIGHT  \u2192  press \u2190 LEFT to dodge',
+    '\uD83D\uDEA7 Pylon on LEFT   \u2192  press \u2192 RIGHT to dodge',
+    '\uD83C\uDF09 Arch overhead   \u2192  press \u2193 DOWN to duck',
+    '\uD83E\uDDF1 Block on ground  \u2192  press \u2191 UP to jump',
+    '',
+    'Timing matters: PERFECT \u2192 GREAT \u2192 GOOD \u2192 BAD \u2192 MISS',
   ];
-  lines.forEach((l, i) => ctx.fillText(l, VX, H / 2 + i * 26));
+  lines.forEach(function(l, i) { ctx.fillText(l, VX, H / 2 - 20 + i * 24); });
 
-  // Lane color legend
-  const legendY = H / 2 + lines.length * 26 + 10;
-  for (let i = 0; i < 4; i++) {
-    const x = VX - 120 + i * 80;
-    ctx.fillStyle = LANE_COLORS[i];
-    ctx.shadowColor = LANE_COLORS[i];
+  // Obstacle preview icons
+  const iconY = H / 2 + lines.length * 24;
+  const icons = [
+    { label: '←', color: '#ff6622' },
+    { label: '↓', color: '#00ccff' },
+    { label: '↑', color: '#44ff44' },
+    { label: '→', color: '#ff6622' },
+  ];
+  icons.forEach(function(ic, i) {
+    const x = VX - 90 + i * 60;
+    ctx.fillStyle = ic.color;
+    ctx.shadowColor = ic.color;
     ctx.shadowBlur = 8;
-    ctx.font = 'bold 22px sans-serif';
-    ctx.fillText(LANE_ARROWS[i], x, legendY);
-  }
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText(ic.label, x, iconY);
+  });
   ctx.shadowBlur = 0;
 
   // Press space
   const sp = 0.5 + 0.5 * Math.sin(t * 4);
   ctx.shadowColor = '#ffee00';
   ctx.shadowBlur = 12 * sp;
-  ctx.fillStyle = `rgba(255,238,0,${sp})`;
+  ctx.fillStyle = 'rgba(255,238,0,' + sp + ')';
   ctx.font = 'bold 20px sans-serif';
-  ctx.fillText('PRESS SPACE TO START', VX, H / 2 + 175);
+  ctx.fillText('PRESS SPACE TO START', VX, H / 2 + 230);
 
   ctx.restore();
 }
@@ -1184,30 +1380,30 @@ function drawGameOverScreen() {
   const gp = 0.8 + 0.2 * Math.sin(t * 2.5);
   ctx.shadowColor = '#ff2244';
   ctx.shadowBlur = 30 * gp;
-  ctx.fillStyle = `rgba(255,50,80,${gp})`;
-  ctx.font = `bold 80px 'Impact', sans-serif`;
+  ctx.fillStyle = 'rgba(255,50,80,' + gp + ')';
+  ctx.font = "bold 80px 'Impact', sans-serif";
   ctx.fillText('GAME OVER', VX, H / 2 - 60);
 
   ctx.shadowBlur = 10;
   ctx.shadowColor = '#00ccff';
   ctx.fillStyle = '#00ddff';
   ctx.font = 'bold 28px sans-serif';
-  ctx.fillText(`SCORE: ${score}`, VX, H / 2 + 10);
+  ctx.fillText('SCORE: ' + score, VX, H / 2 + 10);
 
   ctx.fillStyle = '#ffee44';
   ctx.shadowColor = '#ffcc00';
   ctx.font = '22px sans-serif';
-  ctx.fillText(`MAX COMBO: ${maxCombo}`, VX, H / 2 + 48);
+  ctx.fillText('MAX COMBO: ' + maxCombo, VX, H / 2 + 48);
 
   ctx.fillStyle = '#aaa';
   ctx.shadowBlur = 0;
   ctx.font = '16px sans-serif';
-  ctx.fillText(`Accuracy: ${accuracy.toFixed(1)}%`, VX, H / 2 + 80);
+  ctx.fillText('Accuracy: ' + accuracy.toFixed(1) + '%', VX, H / 2 + 80);
 
   const rp = 0.5 + 0.5 * Math.sin(t * 3.5);
   ctx.shadowColor = '#ffee00';
   ctx.shadowBlur = 10 * rp;
-  ctx.fillStyle = `rgba(255,238,0,${rp})`;
+  ctx.fillStyle = 'rgba(255,238,0,' + rp + ')';
   ctx.font = 'bold 18px sans-serif';
   ctx.fillText('PRESS R or SPACE TO RESTART', VX, H / 2 + 130);
 
@@ -1224,49 +1420,46 @@ function drawResultScreen() {
   ctx.fillRect(0, 0, W, H);
 
   // Grade
-  let grade;
-  if (accuracy >= 95) grade = 'S';
+  var grade;
+  if (accuracy >= 95)      grade = 'S';
   else if (accuracy >= 90) grade = 'A';
   else if (accuracy >= 80) grade = 'B';
   else if (accuracy >= 70) grade = 'C';
   else if (accuracy >= 60) grade = 'D';
-  else grade = 'F';
+  else                     grade = 'F';
 
   const gradeColors = {
     S: '#00ffff', A: '#44ff44', B: '#88cc00',
     C: '#ffcc00', D: '#ff8800', F: '#ff2244'
   };
 
-  // CLEAR text
   const pulse = 0.8 + 0.2 * Math.sin(t * 3);
   ctx.shadowColor = '#00ffcc';
   ctx.shadowBlur = 20 * pulse;
-  ctx.fillStyle = `rgba(0,255,200,${pulse})`;
-  ctx.font = `bold 50px 'Impact', sans-serif`;
+  ctx.fillStyle = 'rgba(0,255,200,' + pulse + ')';
+  ctx.font = "bold 50px 'Impact', sans-serif";
   ctx.fillText('STAGE CLEAR!', VX, 80);
 
-  // Grade letter
   ctx.shadowColor = gradeColors[grade];
   ctx.shadowBlur = 40;
   ctx.fillStyle = gradeColors[grade];
-  ctx.font = `bold 120px 'Impact', sans-serif`;
+  ctx.font = "bold 120px 'Impact', sans-serif";
   ctx.fillText(grade, VX, 200);
 
-  // Stats
   ctx.shadowBlur = 0;
   ctx.font = 'bold 24px sans-serif';
   ctx.fillStyle = '#00ddff';
-  ctx.fillText(`SCORE: ${score}`, VX, 300);
+  ctx.fillText('SCORE: ' + score, VX, 300);
 
   ctx.fillStyle = '#ffee44';
   ctx.font = '20px sans-serif';
-  ctx.fillText(`MAX COMBO: ${maxCombo}`, VX, 335);
+  ctx.fillText('MAX COMBO: ' + maxCombo, VX, 335);
 
   ctx.fillStyle = '#fff';
-  ctx.fillText(`ACCURACY: ${accuracy.toFixed(2)}%`, VX, 365);
+  ctx.fillText('ACCURACY: ' + accuracy.toFixed(2) + '%', VX, 365);
 
   // Judgment breakdown
-  const stats = [
+  const resultStats = [
     ['PERFECT', judgeCounts.PERFECT, JUDGE_COLORS.PERFECT],
     ['GREAT',   judgeCounts.GREAT,   JUDGE_COLORS.GREAT],
     ['GOOD',    judgeCounts.GOOD,    JUDGE_COLORS.GOOD],
@@ -1275,28 +1468,26 @@ function drawResultScreen() {
   ];
   ctx.font = '16px sans-serif';
   const statsY = 410;
-  const total = notes.length;
-  stats.forEach(([label, cnt, col], idx) => {
+  const total = obstacles.length;
+  resultStats.forEach(function(entry, idx) {
     const x = VX - 200 + idx * 100;
-    ctx.fillStyle = col;
-    ctx.fillText(label, x, statsY);
+    ctx.fillStyle = entry[2];
+    ctx.fillText(entry[0], x, statsY);
     ctx.fillStyle = '#fff';
-    ctx.fillText(`${cnt}`, x, statsY + 22);
-    // Bar
+    ctx.fillText(String(entry[1]), x, statsY + 22);
     const barW = 60;
     const barH = 4;
-    const frac = total > 0 ? cnt / total : 0;
+    const frac = total > 0 ? entry[1] / total : 0;
     ctx.fillStyle = 'rgba(40,40,80,0.6)';
     ctx.fillRect(x - barW / 2, statsY + 32, barW, barH);
-    ctx.fillStyle = col;
+    ctx.fillStyle = entry[2];
     ctx.fillRect(x - barW / 2, statsY + 32, barW * frac, barH);
   });
 
-  // Restart
   const rp = 0.5 + 0.5 * Math.sin(t * 3.5);
   ctx.shadowColor = '#ffee00';
   ctx.shadowBlur = 10 * rp;
-  ctx.fillStyle = `rgba(255,238,0,${rp})`;
+  ctx.fillStyle = 'rgba(255,238,0,' + rp + ')';
   ctx.font = 'bold 18px sans-serif';
   ctx.fillText('PRESS R or SPACE TO RESTART', VX, H - 60);
 
@@ -1312,15 +1503,15 @@ function draw() {
 
   if (gameState === 'START') {
     drawTrack();
-    drawJudgeLine();
+    drawJudgeZone();
     drawCharacter();
     drawStartScreen();
     return;
   }
 
   drawTrack();
-  drawNotes();
-  drawJudgeLine();
+  drawObstacles();
+  drawJudgeZone();
   drawCharacter();
   drawPart();
   drawHUD();
@@ -1335,7 +1526,7 @@ function draw() {
 // ============================================================
 function resetGame() {
   gameState = 'PLAYING';
-  notes = generateChart();
+  obstacles = generateChart();
   score = 0; combo = 0; maxCombo = 0;
   health = HP_MAX;
   judgeCounts = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
@@ -1344,7 +1535,8 @@ function resetGame() {
   beatFlash = 0;
   particles = [];
   roadScroll = 0; charPhase = 0;
-  laneFlash = [0, 0, 0, 0];
+  charAction = 'RUN'; charActionTimer = 0; charJumpY = 0;
+  keyFlash = { ArrowLeft: 0, ArrowRight: 0, ArrowDown: 0, ArrowUp: 0 };
 
   if (audioCtx) {
     stepCount = 0; beatCount = 0; melodyPos = 0;

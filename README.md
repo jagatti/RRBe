@@ -11,14 +11,14 @@
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
 ║               ·  · [VANISHING POINT] ·  ·                   ║
-║              / ·  ·  ← · ·  → · ·  · \                     ║
-║             / ·  ·  ·  ·  ·  ↑ ·  ·  · \                   ║
-║            / ·  ←  ·  ·  ·  ·  ·  →  ·  \                  ║
-║           / ·  ·  ·  ↓  ·  ·  ·  ·  ·  · \                 ║
+║              / ·  ·  ·  ·  ·  ·  ·  · \                    ║
+║             / ·  ·  ·  🔶ARCH·  ·  ·  · \                  ║
+║            / ·  ·  · 🔷BLOCK · ·  ·  ·   \                 ║
+║           / ·  🟠PYLON ·  · PYLON🟠 ·  ·  \                ║
 ║          /═══════════════════════════════════\               ║
-║         / [←]    [↓]    [↑]    [→]  ← JUDGE \              ║
-║        /     ← LANE  ↓ LANE  ↑ LANE  → LANE  \             ║
-║       /              🏃 CHARACTER               \            ║
+║         /        ← [JUDGMENT LINE] →         \              ║
+║        /              🏃 CHARACTER              \            ║
+║       /          [←]   [↓]   [↑]   [→]          \           ║
 ║      /═══════════════════════════════════════════\           ║
 ║                                                              ║
 ║     判定 94.5%          649 COMBO         SCORE: 48200      ║
@@ -28,9 +28,9 @@
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
-An R2BEAT-inspired rhythm running game. A character runs on a neon-lit 3D
-track while arrow-marked notes scroll toward you — press the matching arrow
-key with perfect timing to the beat!
+An R2BEAT-inspired rhythm running game. Your character runs forward on a
+neon-lit 3D track while obstacles rush toward you — dodge pylons, duck
+under arches, and jump over blocks to the beat!
 
 ---
 
@@ -49,10 +49,10 @@ file:///path/to/RRBe/index.html
 
 | Key | Action |
 |-----|--------|
-| `←` Left Arrow | Hit **← notes** on the left lane |
-| `↓` Down Arrow | Hit **↓ notes** on the down lane |
-| `↑` Up Arrow | Hit **↑ notes** on the up lane |
-| `→` Right Arrow | Hit **→ notes** on the right lane |
+| `←` Left Arrow | **Dodge left** — avoid a pylon on the right side |
+| `→` Right Arrow | **Dodge right** — avoid a pylon on the left side |
+| `↓` Down Arrow | **Duck** — crouch under an overhead arch |
+| `↑` Up Arrow | **Jump** — leap over a ground block |
 | `SPACE` | Start the game |
 | `R` / `SPACE` | Restart after Game Over or Results |
 
@@ -60,23 +60,32 @@ file:///path/to/RRBe/index.html
 
 ## 🕹️ Gameplay
 
-Notes scroll from the vanishing point toward the **judgment line** near the
-bottom of the screen. Each note shows an arrow (← ↓ ↑ →) indicating which
-key to press. Hit the matching key when the note reaches the judgment line!
+Your character runs forward on a single center lane. Obstacles scroll from
+the vanishing point toward you. Press the **correct arrow key** when each
+obstacle reaches the **judgment zone** near the character:
+
+### Obstacle Types
+
+| Obstacle | Appearance | How to Avoid | Key |
+|----------|-----------|-------------|-----|
+| 🟠 **Pylon (right)** | Orange cone on the RIGHT side | Dodge LEFT | `←` |
+| 🟠 **Pylon (left)** | Orange cone on the LEFT side | Dodge RIGHT | `→` |
+| 🔵 **Arch** | Cyan overhead gate | DUCK under | `↓` |
+| 🟢 **Block** | Green ground barrier | JUMP over | `↑` |
 
 ### Timing & Judgments
 
 | Judgment | Timing Window | Score | Combo | Health |
 |----------|--------------|-------|-------|--------|
-| **PERFECT** | ±42 ms | 100 pts | ✅ continues | +1 |
-| **GREAT** | ±84 ms | 80 pts | ✅ continues | +0.5 |
-| **GOOD** | ±130 ms | 50 pts | ✅ continues | ±0 |
-| **BAD** | ±180 ms | 20 pts | ❌ resets | −3 |
-| **MISS** | >220 ms | 0 pts | ❌ resets | −5 |
+| **PERFECT** | ±45 ms | 100 pts | ✅ continues | +1 |
+| **GREAT** | ±90 ms | 80 pts | ✅ continues | +0.5 |
+| **GOOD** | ±140 ms | 50 pts | ✅ continues | ±0 |
+| **BAD** | ±195 ms | 20 pts | ❌ resets | −3 |
+| **MISS** | >240 ms | 0 pts | ❌ resets | −5 |
 
 ### Scoring
 - Base score × **combo multiplier** (`floor(combo ÷ 10 + 1)`)
-- Every 10 consecutive hits increases the multiplier
+- Every 10 consecutive successful dodges increases the multiplier
 
 ### Health & Survival
 - Health starts at **100**
@@ -109,8 +118,8 @@ external audio files required.
 - **Bass**: Sawtooth synth bass (8th-note groove)
 - **Lead Synth**: Square-wave melody on a pentatonic scale
 
-Notes are generated in sync with the beat, with difficulty ramping from
-simple quarter-note patterns to dense 16th-note runs.
+Obstacles are generated in sync with the beat, with difficulty ramping from
+simple half-note patterns to dense 16th-note sequences.
 
 ---
 
@@ -122,17 +131,17 @@ simple quarter-note patterns to dense 16th-note runs.
   projection
 - **Web Audio API**: Fully procedural drum machine + synth engine
 - **Vanilla JS**: Zero external libraries or CDN dependencies
-- **312 auto-generated notes** across 48 bars (90 seconds)
+- **312 auto-generated obstacles** across 48 bars (90 seconds)
 - **Neon/Cyberpunk aesthetic**: Glow effects, particle bursts, beat flash
+- **Character animation**: Dodge left/right, duck, and jump reactions
 
-### Lane Colors
+### Obstacle Colors
 
-| Lane | Arrow | Color |
-|------|-------|-------|
-| Left | ← | 🩷 Pink/Magenta |
-| Down | ↓ | 🩵 Cyan/Blue |
-| Up | ↑ | 💚 Green |
-| Right | → | 🧡 Orange/Yellow |
+| Obstacle | Color |
+|----------|-------|
+| Pylon (left/right) | 🟠 Orange |
+| Arch (overhead) | 🔵 Cyan/Blue |
+| Block (ground) | 🟢 Green |
 
 ---
 
