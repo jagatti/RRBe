@@ -23,7 +23,7 @@
 ║                                                              ║
 ║     判定 94.5%          649 COMBO         SCORE: 48200      ║
 ║     PERFECT  312                        [===ACCURACY===]    ║
-║     GREAT     45                        [====LIFE=====]     ║
+║     GREAT     45                                            ║
 ║     GOOD      12                                            ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
@@ -56,7 +56,7 @@ file:///path/to/RRBe/index.html
 | `→` Right Arrow | **Collect** — grab a star on the right side |
 | `←` Left Arrow | **Collect** — grab a star on the left side |
 | `SPACE` | Start the game |
-| `R` / `SPACE` | Restart after Game Over or Results |
+| `R` / `SPACE` | Restart after Results |
 
 ---
 
@@ -79,23 +79,22 @@ obstacle reaches the **judgment zone** near the character:
 
 ### Timing & Judgments
 
-| Judgment | Timing Window | Score | Combo | Health |
-|----------|--------------|-------|-------|--------|
-| **PERFECT** | ±45 ms | 100 pts | ✅ continues | +1 |
-| **GREAT** | ±90 ms | 80 pts | ✅ continues | +0.5 |
-| **GOOD** | ±140 ms | 50 pts | ✅ continues | ±0 |
-| **BAD** | ±195 ms | 20 pts | ❌ resets | −3 |
-| **MISS** | >240 ms | 0 pts | ❌ resets | −5 |
+| Judgment | Timing Window | Score | Combo |
+|----------|--------------|-------|-------|
+| **PERFECT** | ±45 ms | 100 pts | ✅ continues |
+| **GREAT** | ±90 ms | 80 pts | ✅ continues |
+| **GOOD** | ±140 ms | 50 pts | ✅ continues |
+| **BAD** | ±195 ms | 20 pts | ❌ resets |
+| **MISS** | >240 ms | 0 pts | ❌ resets |
 
 ### Scoring
 - Base score × **combo multiplier** (`floor(combo ÷ 10 + 1)`)
 - Every 10 consecutive successful dodges increases the multiplier
 
-### Health & Survival
-- Health starts at **100**
-- PERFECT/GREAT heal slightly, BAD/MISS damage health
-- If health reaches **0** → **GAME OVER**
-- Survive the full 90-second song → **STAGE CLEAR** with grade!
+### Game Flow
+- **READY → GO** countdown animation starts each round
+- Survive the full song → **Goal line** appears with checkered flag
+- **STAGE CLEAR** with grade on results screen
 
 ### Grades
 
@@ -115,7 +114,7 @@ obstacle reaches the **judgment zone** near the character:
 BGM is entirely synthesized at runtime using the **Web Audio API** — no
 external audio files required.
 
-- **BPM**: 128
+- **BPM**: 160
 - **Kick drum**: 4-on-the-floor pattern
 - **Snare**: Beats 2 & 4
 - **Hi-hat**: 16th-note pattern with open hi-hats on off-beats
@@ -135,7 +134,7 @@ simple half-note patterns to dense 16th-note sequences.
   projection
 - **Web Audio API**: Fully procedural drum machine + synth engine
 - **Vanilla JS**: Zero external libraries or CDN dependencies
-- **~354 auto-generated obstacles** across 48 bars (90 seconds)
+- **~354 auto-generated obstacles** across 48 bars (~72 seconds)
 - **Neon/Cyberpunk aesthetic**: Glow effects, particle bursts, beat flash
 - **Character animation**: Dodge left/right, duck, and jump reactions
 
