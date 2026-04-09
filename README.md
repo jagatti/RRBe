@@ -10,27 +10,33 @@
 ║  ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝  Race & Rhythm Beat      ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
-║          ·  ·  ·  ·  ·  [VANISHING POINT]  ·  ·  ·  ·      ║
-║        /  ·  ·  · PLATFORM ·  ·  ·  ·  \                    ║
-║       / ·  · ██HIGH██ ·  ·  ·  · LOW·  · \                  ║
-║      / ·  · ·  · ·  · ·  BARRIER  · · ·   \                 ║
-║     /══|══════|══════|══════|══════|══════|══\               ║
-║    /   |      |      |      |      |      |   \              ║
-║   /    | LANE0| LANE1| LANE2| LANE3| LANE4|    \             ║
-║  /     |      |      |   🚗 |      |      |     \            ║
-║ /══════|══════|══════|══════|══════|══════|══════\           ║
-║                        [PLAYER]                              ║
+║               ·  · [VANISHING POINT] ·  ·                   ║
+║              / ·  ·  ← · ·  → · ·  · \                     ║
+║             / ·  ·  ·  ·  ·  ↑ ·  ·  · \                   ║
+║            / ·  ←  ·  ·  ·  ·  ·  →  ·  \                  ║
+║           / ·  ·  ·  ↓  ·  ·  ·  ·  ·  · \                 ║
+║          /═══════════════════════════════════\               ║
+║         / [←]    [↓]    [↑]    [→]  ← JUDGE \              ║
+║        /     ← LANE  ↓ LANE  ↑ LANE  → LANE  \             ║
+║       /              🏃 CHARACTER               \            ║
+║      /═══════════════════════════════════════════\           ║
+║                                                              ║
+║     判定 94.5%          649 COMBO         SCORE: 48200      ║
+║     PERFECT  312                        [===ACCURACY===]    ║
+║     GREAT     45                        [====LIFE=====]     ║
+║     GOOD      12                                            ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
-A neon-soaked cyberpunk racer where you dodge obstacles to the beat of
-procedurally-generated electronic music. Inspired by R2BEAT.
+An R2BEAT-inspired rhythm running game. A character runs on a neon-lit 3D
+track while arrow-marked notes scroll toward you — press the matching arrow
+key with perfect timing to the beat!
 
 ---
 
 ## 🎮 How to Play
 
-Open `index.html` in any modern web browser (Chrome, Firefox, Edge, Safari).  
+Open `index.html` in any modern web browser (Chrome, Firefox, Edge, Safari).
 No server, no install, no dependencies — just open the file and play.
 
 ```
@@ -43,37 +49,58 @@ file:///path/to/RRBe/index.html
 
 | Key | Action |
 |-----|--------|
-| `←` Left Arrow | Move to the left lane |
-| `→` Right Arrow | Move to the right lane |
-| `↑` Up Arrow | **Jump** — clear high walls or land on platforms |
-| `↓` Down Arrow | **Crouch** — slide under low barriers |
+| `←` Left Arrow | Hit **← notes** on the left lane |
+| `↓` Down Arrow | Hit **↓ notes** on the down lane |
+| `↑` Up Arrow | Hit **↑ notes** on the up lane |
+| `→` Right Arrow | Hit **→ notes** on the right lane |
 | `SPACE` | Start the game |
-| `R` | Restart after Game Over |
+| `R` / `SPACE` | Restart after Game Over or Results |
 
 ---
 
 ## 🕹️ Gameplay
 
-### Obstacle Types
+Notes scroll from the vanishing point toward the **judgment line** near the
+bottom of the screen. Each note shows an arrow (← ↓ ↑ →) indicating which
+key to press. Hit the matching key when the note reaches the judgment line!
 
-| Obstacle | Color | How to Avoid |
-|----------|-------|--------------|
-| **LOW barrier** | 🟠 Red/Orange | Crouch (↓) or jump over (↑) |
-| **HIGH wall** | 🟣 Magenta/Red | Jump (↑) or change lane |
-| **PLATFORM** | 🟢 Cyan/Green | Jump (↑) onto it for bonus points |
+### Timing & Judgments
 
-- **5 lanes** — move left and right to dodge incoming obstacles
-- Obstacles are generated in sync with the **128 BPM** beat
-- Successfully avoiding an obstacle in the same lane rewards points and builds your **combo**
-- Changing lanes to avoid obstacles also scores points
-- Getting hit breaks your combo and costs a **life** (3 lives total)
-- Speed increases the further you travel — survive as long as you can!
+| Judgment | Timing Window | Score | Combo | Health |
+|----------|--------------|-------|-------|--------|
+| **PERFECT** | ±42 ms | 100 pts | ✅ continues | +1 |
+| **GREAT** | ±84 ms | 80 pts | ✅ continues | +0.5 |
+| **GOOD** | ±130 ms | 50 pts | ✅ continues | ±0 |
+| **BAD** | ±180 ms | 20 pts | ❌ resets | −3 |
+| **MISS** | >220 ms | 0 pts | ❌ resets | −5 |
+
+### Scoring
+- Base score × **combo multiplier** (`floor(combo ÷ 10 + 1)`)
+- Every 10 consecutive hits increases the multiplier
+
+### Health & Survival
+- Health starts at **100**
+- PERFECT/GREAT heal slightly, BAD/MISS damage health
+- If health reaches **0** → **GAME OVER**
+- Survive the full 90-second song → **STAGE CLEAR** with grade!
+
+### Grades
+
+| Accuracy | Grade |
+|----------|-------|
+| ≥ 95% | **S** |
+| ≥ 90% | **A** |
+| ≥ 80% | **B** |
+| ≥ 70% | **C** |
+| ≥ 60% | **D** |
+| < 60% | **F** |
 
 ---
 
 ## 🎵 Music
 
-BGM is entirely synthesized at runtime using the **Web Audio API** — no external files required.
+BGM is entirely synthesized at runtime using the **Web Audio API** — no
+external audio files required.
 
 - **BPM**: 128
 - **Kick drum**: 4-on-the-floor pattern
@@ -82,34 +109,30 @@ BGM is entirely synthesized at runtime using the **Web Audio API** — no extern
 - **Bass**: Sawtooth synth bass (8th-note groove)
 - **Lead Synth**: Square-wave melody on a pentatonic scale
 
-The background and lane visuals pulse in sync with each beat for an immersive rhythm experience.
+Notes are generated in sync with the beat, with difficulty ramping from
+simple quarter-note patterns to dense 16th-note runs.
 
 ---
 
 ## 🖥️ Technical Details
 
-- **Single file**: Everything runs from `index.html` — HTML, CSS, and JavaScript inline
-- **HTML5 Canvas**: Pseudo-3D perspective rendering (vanishing-point projection)
+- **Single file**: Everything runs from `index.html` — HTML, CSS, and
+  JavaScript inline
+- **HTML5 Canvas** (960×640): Pseudo-3D perspective road with vanishing-point
+  projection
 - **Web Audio API**: Fully procedural drum machine + synth engine
 - **Vanilla JS**: Zero external libraries or CDN dependencies
-- **Neon/Cyberpunk aesthetic**: Glow effects via `shadowBlur`, neon color palette (cyan, magenta, orange)
-- **Particle system**: Hit/score feedback bursts
+- **312 auto-generated notes** across 48 bars (90 seconds)
+- **Neon/Cyberpunk aesthetic**: Glow effects, particle bursts, beat flash
 
----
+### Lane Colors
 
-## 📊 Scoring
-
-| Action | Base Points |
-|--------|-------------|
-| Pass a LOW obstacle (crouch) | 20 |
-| Clear a HIGH obstacle (jump) | 25 |
-| Land on a PLATFORM | 30 |
-| Weave past obstacle (different lane) | 15 |
-| Obstacle passes by | 10 |
-| Distance traveled | +1 per unit |
-
-All base points are multiplied by a **combo multiplier**: `floor(combo ÷ 10 + 1)`.  
-Every 10 consecutive successes adds ×1 to your score multiplier.
+| Lane | Arrow | Color |
+|------|-------|-------|
+| Left | ← | 🩷 Pink/Magenta |
+| Down | ↓ | 🩵 Cyan/Blue |
+| Up | ↑ | 💚 Green |
+| Right | → | 🧡 Orange/Yellow |
 
 ---
 
