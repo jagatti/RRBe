@@ -47,6 +47,20 @@ const JUMP_VY = 0.9;
 const CROUCH_DURATION = 0.5;
 const MAX_PARTICLES = 200;
 
+// Collision thresholds (world height units)
+const LOW_OBSTACLE_JUMP_CLEAR = 0.55;  // min jump height to clear a LOW obstacle
+const HIGH_OBSTACLE_JUMP_CLEAR = 0.50; // min jump height to clear a HIGH obstacle
+
+// Difficulty / speed ramp
+const BASE_GAME_SPEED = 0.45;        // initial z-units per second
+const MAX_GAME_SPEED  = 1.2;         // cap on game speed
+const SPEED_RAMP_FACTOR = 0.00012;   // speed increase per distance unit
+
+// Obstacle spawn probability
+const BASE_SPAWN_CHANCE = 0.35;      // base probability per beat
+const MAX_SPAWN_CHANCE  = 0.70;      // maximum probability
+const SPAWN_DIFFICULTY_FACTOR = 0.0003; // how fast spawn chance rises with distance
+
 // =============================================
 // CANVAS SETUP
 // =============================================
@@ -401,7 +415,7 @@ function scheduleObstacles() {
     const beat = baseBeat + i;
     if (beat < nextSpawnBeat) continue;
     // Difficulty ramp
-    const chance = Math.min(0.7, 0.35 + distance * 0.0003);
+    const chance = Math.min(MAX_SPAWN_CHANCE, BASE_SPAWN_CHANCE + distance * SPAWN_DIFFICULTY_FACTOR);
     if (Math.random() < chance) {
       // Pick lane(s) – ensure at least one safe lane exists
       const numBlocked = Math.random() < 0.25 ? 2 : 1;
@@ -481,6 +495,10 @@ function updateObstacles(dt) {
   }
 }
 
+function comboScore(base) {
+  return base * Math.floor(combo / 10 + 1);
+}
+
 function checkCollision(obs) {
   // If player is invincible, no collision
   if (player.invincible > 0) return;
@@ -488,7 +506,7 @@ function checkCollision(obs) {
   const playerLane = player.lane;
   if (obs.lane !== playerLane) {
     // Different lane, always safe – award points for weaving
-    score += 15;
+    score += comboScore(15);
     combo++;
     if (combo > maxCombo) maxCombo = combo;
     if (audioCtx) playSFX_score(audioCtx.currentTime);
@@ -499,20 +517,20 @@ function checkCollision(obs) {
   // Same lane – check if player avoids obstacle
   let safe = false;
   if (obs.type === 'LOW') {
-    // Safe if crouching OR jumping high
-    safe = (player.state === 'CROUCHING') || (player.y > 0.55);
+    // Safe if crouching OR jumping high enough to clear the low barrier
+    safe = (player.state === 'CROUCHING') || (player.y > LOW_OBSTACLE_JUMP_CLEAR);
     if (safe && player.state === 'CROUCHING') {
-      score += 20;
+      score += comboScore(20);
       combo++;
       if (combo > maxCombo) maxCombo = combo;
       if (audioCtx) playSFX_score(audioCtx.currentTime);
       spawnParticles(laneWX(obs.lane), 0.2, 0.98, '#ffaa00', 6);
     }
   } else if (obs.type === 'HIGH') {
-    // Safe if jumping high enough
-    safe = player.y > 0.5;
+    // Safe if jumping high enough to clear the tall wall
+    safe = player.y > HIGH_OBSTACLE_JUMP_CLEAR;
     if (safe) {
-      score += 25;
+      score += comboScore(25);
       combo++;
       if (combo > maxCombo) maxCombo = combo;
       if (audioCtx) playSFX_score(audioCtx.currentTime);
@@ -522,7 +540,7 @@ function checkCollision(obs) {
     // Safe if jumping (any height)
     safe = player.state === 'JUMPING' || player.y > 0.2;
     if (safe) {
-      score += 30;
+      score += comboScore(30);
       combo++;
       if (combo > maxCombo) maxCombo = combo;
       if (audioCtx) playSFX_score(audioCtx.currentTime);
@@ -629,8 +647,8 @@ function update(dt) {
 
   distance += gameSpeed * dt * 100;
   // Speed ramp
-  gameSpeed = 0.45 + distance * 0.00012;
-  gameSpeed = Math.min(gameSpeed, 1.2);
+  gameSpeed = BASE_GAME_SPEED + distance * SPEED_RAMP_FACTOR;
+  gameSpeed = Math.min(gameSpeed, MAX_GAME_SPEED);
 
   beatFlash = Math.max(0, beatFlash - dt * (1 / BEAT_S) * 1.5);
   titlePulse += dt * 2;
