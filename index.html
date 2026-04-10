@@ -179,6 +179,14 @@ let audioStarted = false;
 let gameStartTime = 0;
 let gameVolume = 0.50; // 0.0 – 1.0, default 50%
 
+// Custom MP3 song state
+let customAudioBuffer = null;   // decoded AudioBuffer
+let customSourceNode = null;    // playing BufferSourceNode
+let customSongBeats = null;     // array of beat times (seconds)
+let isCustomSong = false;       // true when playing a dropped MP3
+let mp3DropZoneHover = false;   // drag hover visual feedback
+let mp3LoadingMsg = '';         // loading status text
+
 function applyVolume() {
   if (masterGain) masterGain.gain.value = gameVolume * 0.80; // scale to comfortable max
 }
@@ -193,6 +201,218 @@ function initAudio() {
   nextStepTime = audioCtx.currentTime + 0.1;
   stepCount = 0; beatCount = 0; melodyPos = 0;
   audioStarted = true;
+}
+
+function stopCustomAudio() {
+  if (customSourceNode) {
+    try { customSourceNode.stop(); } catch(e) {}
+    customSourceNode = null;
+  }
+}
+
+function startCustomAudio() {
+  if (!customAudioBuffer || !audioCtx) return;
+  stopCustomAudio();
+  customSourceNode = audioCtx.createBufferSource();
+  customSourceNode.buffer = customAudioBuffer;
+  customSourceNode.connect(masterGain);
+  customSourceNode.start(audioCtx.currentTime + READY_GO_DUR);
+}
+
+// ============================================================
+// BEAT DETECTION — energy-based onset detection
+// ============================================================
+function detectBeats(audioBuffer) {
+  // Downsample to mono
+  const numChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const length = audioBuffer.length;
+  const mono = new Float32Array(length);
+  for (let ch = 0; ch < numChannels; ch++) {
+    const data = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < length; i++) mono[i] += data[i] / numChannels;
+  }
+
+  // Compute energy in windows
+  const windowSize = Math.floor(sampleRate * 0.02); // 20ms windows
+  const hopSize = Math.floor(windowSize / 2);
+  const numWindows = Math.floor((length - windowSize) / hopSize);
+  const energy = new Float32Array(numWindows);
+
+  for (let w = 0; w < numWindows; w++) {
+    let sum = 0;
+    const start = w * hopSize;
+    for (let i = start; i < start + windowSize; i++) {
+      sum += mono[i] * mono[i];
+    }
+    energy[w] = sum / windowSize;
+  }
+
+  // Compute local average energy and find onsets
+  const avgWindow = 40; // ~400ms history
+  const onsets = [];
+  const threshold = 1.5; // onset must be 1.5x local average
+  let lastOnsetTime = -0.2;
+
+  for (let w = avgWindow; w < numWindows; w++) {
+    let localAvg = 0;
+    for (let j = w - avgWindow; j < w; j++) localAvg += energy[j];
+    localAvg /= avgWindow;
+
+    const t = (w * hopSize) / sampleRate;
+    if (energy[w] > localAvg * threshold && energy[w] > 0.001 && t - lastOnsetTime > 0.12) {
+      onsets.push(t);
+      lastOnsetTime = t;
+    }
+  }
+
+  return onsets;
+}
+
+function estimateBPM(onsets, duration) {
+  if (onsets.length < 4) return 120;
+
+  // Compute inter-onset intervals
+  const intervals = [];
+  for (let i = 1; i < onsets.length; i++) {
+    intervals.push(onsets[i] - onsets[i - 1]);
+  }
+
+  // Histogram of intervals quantized to BPM range 60-200
+  const bpmCounts = {};
+  for (const iv of intervals) {
+    if (iv < 0.1 || iv > 2.0) continue;
+    // Try multiplying/dividing to map to reasonable BPM range
+    for (let mult = 1; mult <= 4; mult++) {
+      const adjIv = iv * mult;
+      const bpm = Math.round(60 / adjIv);
+      if (bpm >= 70 && bpm <= 200) {
+        const key = Math.round(bpm / 2) * 2; // round to nearest 2
+        bpmCounts[key] = (bpmCounts[key] || 0) + 1;
+      }
+    }
+  }
+
+  // Find most common BPM
+  let bestBPM = 120, bestCount = 0;
+  for (const [bpm, count] of Object.entries(bpmCounts)) {
+    if (count > bestCount) {
+      bestCount = count;
+      bestBPM = parseInt(bpm);
+    }
+  }
+  return bestBPM;
+}
+
+function generateChartFromBeats(beats, bpm, duration) {
+  const obstacles = [];
+  const beatS = 60 / bpm;
+
+  // Seeded random
+  let seed = bpm * 1000 + Math.floor(duration) * 7;
+  function rand() {
+    seed = (seed * 16807) % 2147483647;
+    return (seed & 0x7fffffff) / 0x7fffffff;
+  }
+
+  // Skip first 1.5s (intro), stop 2s before end
+  const startT = 1.5;
+  const endT = duration - 2.0;
+  let lastType = -1;
+  let lastTime = -1;
+  const minGap = beatS * 0.4; // minimum gap between obstacles
+
+  for (const t of beats) {
+    if (t < startT || t > endT) continue;
+    if (t - lastTime < minGap) continue;
+
+    // Pick type based on random + musical heuristics
+    const r = rand();
+    let typeIdx;
+    if (r < 0.18) typeIdx = 0;      // PYLON_R
+    else if (r < 0.36) typeIdx = 1;  // PYLON_L
+    else if (r < 0.50) typeIdx = 2;  // ARCH
+    else if (r < 0.64) typeIdx = 3;  // BLOCK
+    else if (r < 0.82) typeIdx = 4;  // STAR_R
+    else typeIdx = 5;                 // STAR_L
+
+    // Avoid same consecutive type
+    if (typeIdx === lastType) {
+      typeIdx = (typeIdx + 1 + Math.floor(rand() * 4)) % 6;
+    }
+    lastType = typeIdx;
+    lastTime = t;
+
+    obstacles.push({
+      time: t,
+      type: OBS_TYPES[typeIdx],
+      judged: false,
+      judgment: null,
+      hitTime: 0
+    });
+  }
+
+  obstacles.sort((a, b) => a.time - b.time);
+  return obstacles;
+}
+
+// Handle MP3 file drop
+function handleMP3Drop(file) {
+  if (!file || !file.type.startsWith('audio/')) {
+    mp3LoadingMsg = 'Not an audio file!';
+    setTimeout(() => { mp3LoadingMsg = ''; }, 2000);
+    return;
+  }
+  mp3LoadingMsg = 'Loading: ' + file.name + '...';
+  initAudio();
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    mp3LoadingMsg = 'Analyzing beats...';
+    audioCtx.decodeAudioData(e.target.result, function(buffer) {
+      customAudioBuffer = buffer;
+      const duration = buffer.duration;
+      const beats = detectBeats(buffer);
+      const bpm = estimateBPM(beats, duration);
+      customSongBeats = beats;
+
+      // Calculate bars from duration
+      const beatSec = 60 / bpm;
+      const totalBeats = Math.floor(duration / beatSec);
+      const bars = Math.max(8, Math.floor(totalBeats / 4));
+
+      // Trim filename for display
+      let displayName = file.name.replace(/\.[^/.]+$/, '');
+      if (displayName.length > 18) displayName = displayName.substring(0, 18) + '…';
+
+      // Remove previous custom song entry if exists
+      while (SONGS.length > 4) {
+        SONGS.pop();
+        SONG_DATA.pop();
+      }
+
+      // Add custom song to SONGS array
+      SONGS.push({
+        name: displayName,
+        bpm: bpm,
+        bars: bars,
+        color: '#00ff88',
+        desc: 'BPM ' + bpm + ' — Custom MP3'
+      });
+
+      // Add a dummy SONG_DATA entry (won't be used for synth)
+      SONG_DATA.push(SONG_DATA[0]); // placeholder
+
+      // Select the custom song
+      songSelectIndex = SONGS.length - 1;
+      mp3LoadingMsg = '✓ ' + displayName + ' (BPM ' + bpm + ', ' + beats.length + ' beats)';
+      setTimeout(() => { mp3LoadingMsg = ''; }, 3000);
+    }, function(err) {
+      mp3LoadingMsg = 'Failed to decode audio!';
+      setTimeout(() => { mp3LoadingMsg = ''; }, 2000);
+    });
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 function playKick(time) {
@@ -301,6 +521,17 @@ function sfxMiss(t) {
 // Audio scheduler
 function scheduleAudio() {
   if (!audioCtx || (gameState !== 'PLAYING' && gameState !== 'READY_GO')) return;
+  // Skip synth scheduling for custom MP3 songs (audio plays from buffer)
+  if (isCustomSong) {
+    // Still track beats for visual beat flash
+    while (nextStepTime < audioCtx.currentTime + 0.1) {
+      const step = stepCount % 16;
+      if (step === 0) { beatCount++; beatFlash = 1.0; }
+      stepCount++;
+      nextStepTime += STEP_S;
+    }
+    return;
+  }
   const sd = curSongData;
   while (nextStepTime < audioCtx.currentTime + 0.1) {
     const step = stepCount % 16;
@@ -586,6 +817,23 @@ window.addEventListener('keydown', (e) => {
 
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
+// Drag and drop for MP3 files
+canvas.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  if (gameState === 'SONG_SELECT') mp3DropZoneHover = true;
+});
+canvas.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  mp3DropZoneHover = false;
+});
+canvas.addEventListener('drop', (e) => {
+  e.preventDefault();
+  mp3DropZoneHover = false;
+  if (gameState === 'SONG_SELECT' && e.dataTransfer.files.length > 0) {
+    handleMP3Drop(e.dataTransfer.files[0]);
+  }
+});
+
 // ============================================================
 // TIMING / JUDGMENT
 // ============================================================
@@ -743,6 +991,7 @@ function update(deltaT) {
 
   const allDone = obstacles.length > 0 && obstacles.every(o => o.judged);
   if (allDone && now > lastObsTime + 1.5) {
+    stopCustomAudio();
     gameState = 'RESULT';
   }
 }
@@ -2339,13 +2588,43 @@ function drawSongSelectScreen() {
   ];
   lines.forEach(function(l, idx) { ctx.fillText(l, VX, 490 + idx * 22); });
 
-  // Press space
+   // Press space
   const sp = 0.5 + 0.5 * Math.sin(t * 4);
   ctx.shadowColor = '#ffee00';
   ctx.shadowBlur = 12 * sp;
   ctx.fillStyle = `rgba(255,238,0,${sp})`;
   ctx.font = 'bold 18px sans-serif';
   ctx.fillText('PRESS SPACE TO START', VX, H - 50);
+
+  // MP3 drop zone indicator
+  ctx.shadowBlur = 0;
+  if (mp3DropZoneHover) {
+    ctx.save();
+    ctx.strokeStyle = '#00ff88';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([10, 6]);
+    ctx.beginPath();
+    ctx.roundRect(VX - 200, 150, 400, 300, 15);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(0,255,136,0.15)';
+    ctx.fill();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#00ff88';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText('🎵 Drop MP3 Here!', VX, 310);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = 'rgba(0,255,136,0.4)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('🎵 Drag & drop an MP3 file to add a custom song', VX, 558);
+  }
+
+  // MP3 loading message
+  if (mp3LoadingMsg) {
+    ctx.fillStyle = '#00ff88';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(mp3LoadingMsg, VX, 572);
+  }
 
   ctx.restore();
   drawVolumeUI();
@@ -2401,7 +2680,14 @@ function resetGame() {
   gameState = 'READY_GO';
   readyGoTimer = READY_GO_DUR;
   goalLineZ = -1;
-  obstacles = generateChart();
+
+  // Use beat-detected chart for custom MP3, normal generator otherwise
+  if (isCustomSong && customSongBeats) {
+    obstacles = generateChartFromBeats(customSongBeats, BPM, SONG_DURATION);
+  } else {
+    obstacles = generateChart();
+  }
+
   score = 0; combo = 0; maxCombo = 0;
   judgeCounts = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
   accuracy = 100;
@@ -2418,6 +2704,9 @@ function resetGame() {
     nextStepTime = audioCtx.currentTime + READY_GO_DUR + 0.05;
     gameStartTime = audioCtx.currentTime + READY_GO_DUR;
   }
+
+  // Start MP3 playback for custom songs
+  if (isCustomSong) startCustomAudio();
 }
 
 function selectSong(idx) {
@@ -2428,7 +2717,14 @@ function selectSong(idx) {
   STEP_S = BEAT_S / 4;
   SONG_BARS = song.bars;
   SONG_DURATION = SONG_BARS * 4 * BEAT_S;
-  curSongData = SONG_DATA[idx];
+  isCustomSong = (idx >= 4 && customAudioBuffer !== null);
+  if (!isCustomSong) {
+    curSongData = SONG_DATA[idx];
+  } else {
+    // For custom songs, use actual audio duration
+    SONG_DURATION = customAudioBuffer.duration;
+    curSongData = SONG_DATA[0]; // placeholder (synth won't play)
+  }
   gameState = 'START';
 }
 
@@ -2439,6 +2735,7 @@ function startGame() {
 }
 
 function resetToStart() {
+  stopCustomAudio();
   gameState = 'SONG_SELECT';
 }
 
