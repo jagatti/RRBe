@@ -40,7 +40,7 @@ const ROAD_HW = 360;         // half-width of road at bottom
 const PERSP_POW = 1.5;
 
 // Obstacle scroll
-const OBS_SCROLL_TIME = 1.8; // seconds from spawn to judgment line (wider spacing)
+const OBS_SCROLL_TIME = 1.2; // seconds from spawn to judgment line (closer appearance)
 
 // Timing windows (seconds)
 const T_PERFECT = 0.045;
@@ -1041,14 +1041,14 @@ function drawObstacles() {
   visible.sort((a, b) => a.z - b.z);
 
   for (const { obs: o, z } of visible) {
-    if (z < 0.05) continue;
+    if (z < 0.30) continue;
 
     // Use road perspective mapping so obstacles move WITH the road surface
     const s = zToScreen(z);
     const y = s.y;
-    // Smoother scaling: use sqrt-based curve capped at 0.85 to prevent sudden size jump
-    const rawScale = Math.max(0.10, s.t);
-    const scale = Math.min(0.85, rawScale);
+    // Narrow scale range: min 0.45, max 0.95 — obstacles don't change size drastically
+    const rawScale = Math.max(0.45, s.t);
+    const scale = Math.min(0.95, rawScale);
 
     // Alpha: fade in gradually from far, dim if missed
     let alpha = Math.min(1, s.t * 2.5);
@@ -1126,9 +1126,9 @@ function drawPylon(x, y, scale, color, isLeft) {
 }
 
 function drawArch(x, y, scale, color) {
-  // Arch / gate shape - overhead obstacle
+  // Arch / gate shape - overhead obstacle with rounded top
   const w = 90 * scale;
-  const h = 85 * scale;
+  const h = 100 * scale;  // taller apex
   const postW = 12 * scale;
 
   ctx.save();
@@ -1137,16 +1137,30 @@ function drawArch(x, y, scale, color) {
 
   // Left post
   ctx.fillStyle = color;
-  ctx.fillRect(x - w - postW, y - h, postW, h);
+  ctx.fillRect(x - w - postW, y - h * 0.65, postW, h * 0.65);
   // Right post
-  ctx.fillRect(x + w, y - h, postW, h);
-  // Top bar
-  ctx.fillRect(x - w - postW, y - h - postW, w * 2 + postW * 2, postW);
+  ctx.fillRect(x + w, y - h * 0.65, postW, h * 0.65);
 
-  // Glow effect on top bar
-  ctx.globalAlpha = 0.4;
+  // Rounded arch top (semicircular arc connecting the two posts)
+  ctx.beginPath();
+  ctx.moveTo(x - w - postW, y - h * 0.65);
+  // Draw the arc from left post top to right post top, curving up to the apex
+  ctx.quadraticCurveTo(x, y - h - postW * 2, x + w + postW, y - h * 0.65);
+  ctx.lineTo(x + w, y - h * 0.65);
+  ctx.quadraticCurveTo(x, y - h + postW, x - w, y - h * 0.65);
+  ctx.closePath();
+  ctx.fill();
+
+  // Glow effect on arch
+  ctx.globalAlpha = 0.3;
   ctx.fillStyle = '#fff';
-  ctx.fillRect(x - w - postW, y - h - postW, w * 2 + postW * 2, postW * 0.5);
+  ctx.beginPath();
+  ctx.moveTo(x - w - postW, y - h * 0.65);
+  ctx.quadraticCurveTo(x, y - h - postW * 2, x + w + postW, y - h * 0.65);
+  ctx.lineTo(x + w, y - h * 0.65);
+  ctx.quadraticCurveTo(x, y - h + postW, x - w, y - h * 0.65);
+  ctx.closePath();
+  ctx.fill();
   ctx.globalAlpha = 1;
 
   ctx.restore();
@@ -1154,7 +1168,7 @@ function drawArch(x, y, scale, color) {
 
 function drawBlock(x, y, scale, color) {
   // Ground block - low obstacle to jump over
-  const w = 70 * scale;
+  const w = 45 * scale;
   const h = 38 * scale;
 
   ctx.save();
