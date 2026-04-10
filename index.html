@@ -276,7 +276,7 @@ function generateChart() {
   // Seeded pseudo-random for repeatable charts per song
   let seed = BPM * 1000 + SONG_BARS * 7;
   function rand() {
-    seed = (seed * 16807 + 0) % 2147483647;
+    seed = (seed * 16807) % 2147483647;
     return (seed & 0x7fffffff) / 0x7fffffff;
   }
 
