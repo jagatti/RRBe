@@ -177,12 +177,17 @@ let nextStepTime = 0, stepCount = 0, beatCount = 0;
 let melodyPos = 0;
 let audioStarted = false;
 let gameStartTime = 0;
+let gameVolume = 0.50; // 0.0 – 1.0, default 50%
+
+function applyVolume() {
+  if (masterGain) masterGain.gain.value = gameVolume * 0.80; // scale to comfortable max
+}
 
 function initAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     masterGain = audioCtx.createGain();
-    masterGain.gain.value = 0.40;
+    applyVolume();
     masterGain.connect(audioCtx.destination);
   }
   nextStepTime = audioCtx.currentTime + 0.1;
@@ -546,6 +551,17 @@ window.addEventListener('keydown', (e) => {
 
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
     e.preventDefault();
+  }
+
+  // Volume control — available on title & song select screens
+  if (gameState === 'SONG_SELECT' || gameState === 'START') {
+    if (e.code === 'Minus' || e.code === 'NumpadSubtract') {
+      gameVolume = Math.max(0, gameVolume - 0.05);
+      applyVolume();
+    } else if (e.code === 'Equal' || e.code === 'NumpadAdd') {
+      gameVolume = Math.min(1, gameVolume + 0.05);
+      applyVolume();
+    }
   }
 
   if (gameState === 'SONG_SELECT') {
@@ -1289,16 +1305,18 @@ function drawStar(x, y, scale, color, isLeft) {
   ctx.shadowBlur = 12 * scale;
   ctx.fillStyle = color;
 
-  // Rotate star slowly for sparkle effect
-  const rot = performance.now() / 400;
+  // Gentle left-right sway instead of full rotation
+  const sway = Math.sin(performance.now() / 600) * 0.18; // ~10° max tilt
+  ctx.translate(x, y - r * 0.5);
+  ctx.rotate(sway);
   ctx.beginPath();
   for (let i = 0; i < 5; i++) {
-    const outerAngle = rot + (i * 2 * Math.PI / 5) - Math.PI / 2;
-    const innerAngle = rot + ((i + 0.5) * 2 * Math.PI / 5) - Math.PI / 2;
-    const ox = x + Math.cos(outerAngle) * r;
-    const oy = (y - r * 0.5) + Math.sin(outerAngle) * r;
-    const ix = x + Math.cos(innerAngle) * ir;
-    const iy = (y - r * 0.5) + Math.sin(innerAngle) * ir;
+    const outerAngle = (i * 2 * Math.PI / 5) - Math.PI / 2;
+    const innerAngle = ((i + 0.5) * 2 * Math.PI / 5) - Math.PI / 2;
+    const ox = Math.cos(outerAngle) * r;
+    const oy = Math.sin(outerAngle) * r;
+    const ix = Math.cos(innerAngle) * ir;
+    const iy = Math.sin(innerAngle) * ir;
     if (i === 0) ctx.moveTo(ox, oy);
     else ctx.lineTo(ox, oy);
     ctx.lineTo(ix, iy);
@@ -1310,7 +1328,7 @@ function drawStar(x, y, scale, color, isLeft) {
   ctx.fillStyle = '#fff';
   ctx.globalAlpha = 0.4;
   ctx.beginPath();
-  ctx.arc(x, y - r * 0.5, ir * 0.6, 0, Math.PI * 2);
+  ctx.arc(0, 0, ir * 0.6, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalAlpha = 1;
 
@@ -2021,6 +2039,35 @@ function drawGoalLine() {
 // ============================================================
 // RENDERING: Screens
 // ============================================================
+function drawVolumeUI() {
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const volX = VX, volY = H - 22;
+  const barW = 120, barH = 8;
+  // Label
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = 'rgba(180,220,255,0.6)';
+  ctx.shadowBlur = 0;
+  ctx.fillText('VOLUME  [ − / + ]', volX, volY - 14);
+  // Background bar
+  ctx.fillStyle = 'rgba(60,60,100,0.6)';
+  ctx.fillRect(volX - barW / 2, volY - barH / 2, barW, barH);
+  // Fill bar
+  const fillW = barW * gameVolume;
+  ctx.fillStyle = 'rgba(0,220,180,0.7)';
+  ctx.fillRect(volX - barW / 2, volY - barH / 2, fillW, barH);
+  // Border
+  ctx.strokeStyle = 'rgba(120,160,200,0.4)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(volX - barW / 2, volY - barH / 2, barW, barH);
+  // Percentage text
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.font = '11px sans-serif';
+  ctx.fillText(Math.round(gameVolume * 100) + '%', volX, volY + 12);
+  ctx.restore();
+}
+
 function drawStartScreen() {
   const t = performance.now() / 1000;
   const pulse = 0.7 + 0.3 * Math.sin(t * 3);
@@ -2089,6 +2136,7 @@ function drawStartScreen() {
   ctx.fillText('PRESS SPACE TO START', VX, H / 2 + 230);
 
   ctx.restore();
+  drawVolumeUI();
 }
 
 function drawResultScreen() {
@@ -2300,6 +2348,7 @@ function drawSongSelectScreen() {
   ctx.fillText('PRESS SPACE TO START', VX, H - 50);
 
   ctx.restore();
+  drawVolumeUI();
 }
 
 // ============================================================
