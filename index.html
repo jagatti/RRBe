@@ -374,7 +374,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
         const midT = obstacles[i].time + gap * 0.5;
         if (midT > startT && midT < endT) {
           let typeIdx = Math.floor(rand() * 6);
-          if (typeIdx === obstacles[i].type) typeIdx = (typeIdx + 2) % 6;
+          if (OBS_TYPES[typeIdx] === obstacles[i].type) typeIdx = (typeIdx + 2) % 6;
           extraObs.push({
             time: midT,
             type: OBS_TYPES[typeIdx],
