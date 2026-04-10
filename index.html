@@ -370,6 +370,11 @@ let charJumpY = 0;        // vertical offset for jump
 // Key flash state per direction
 let keyFlash = { ArrowLeft: 0, ArrowRight: 0, ArrowDown: 0, ArrowUp: 0 };
 
+// Rhythm ball flash state (for hit feedback)
+let rhythmBallFlashes = [];  // { time, judgment, timer }
+const RHYTHM_BALL_RADIUS = 8;
+const RHYTHM_BALL_TRAVEL = 1.0; // seconds for ball to travel from edge to center
+
 // ============================================================
 // PERSPECTIVE MATH
 // ============================================================
@@ -521,6 +526,7 @@ function judgeKeyPress(keyCode) {
 
   // FX
   spawnPart(VX, ROAD_BOTTOM, JUDGE_COLORS[j], j === 'PERFECT' ? 20 : j === 'GREAT' ? 14 : 8);
+  addRhythmBallFlash(j);
 
   if (audioCtx) {
     const t = audioCtx.currentTime;
@@ -543,6 +549,7 @@ function processAutoMisses() {
       lastJudge = 'MISS';
       judgeTimer = 0.35;
       if (audioCtx) sfxMiss(audioCtx.currentTime);
+      addRhythmBallFlash('MISS');
       updateAccuracy();
     }
   }
@@ -865,6 +872,118 @@ function drawJudgeZone() {
 }
 
 // ============================================================
+// RENDERING: Rhythm Balls (timing indicators)
+// ============================================================
+function drawRhythmBalls() {
+  const now = musicTime();
+  const s = zToScreen(1.0);
+  const targetY = s.y;  // judgment zone Y
+  const r = RHYTHM_BALL_RADIUS;
+
+  ctx.save();
+
+  // Draw approaching balls for upcoming obstacles
+  for (const o of obstacles) {
+    if (o.judged) continue;
+    const timeDiff = o.time - now;
+    if (timeDiff < 0 || timeDiff > RHYTHM_BALL_TRAVEL) continue;
+
+    // Progress: 0 = at edge, 1 = at center
+    const progress = 1 - (timeDiff / RHYTHM_BALL_TRAVEL);
+
+    // Balls come from both left and right edges toward center
+    const leftX = -r + (VX + r) * progress;
+    const rightX = W + r - (W + r - VX) * progress;
+
+    // Easing for smooth deceleration
+    const eased = 1 - Math.pow(1 - progress, 2);
+    const leftXE = -r + (VX + r) * eased;
+    const rightXE = W + r - (W + r - VX) * eased;
+
+    // Alpha: fade in, full near target
+    const alpha = Math.min(1, progress * 2.5);
+
+    // Default orange color
+    ctx.globalAlpha = alpha * 0.9;
+    ctx.fillStyle = '#ff8833';
+    ctx.shadowColor = '#ff8833';
+    ctx.shadowBlur = 6;
+
+    // Left ball
+    ctx.beginPath();
+    ctx.arc(leftXE, targetY, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Right ball
+    ctx.beginPath();
+    ctx.arc(rightXE, targetY, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Small trail effect
+    if (progress > 0.1) {
+      ctx.globalAlpha = alpha * 0.2;
+      ctx.shadowBlur = 0;
+      const trailOff = (1 - eased) * 30;
+      ctx.beginPath();
+      ctx.arc(leftXE - trailOff, targetY, r * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(rightXE + trailOff, targetY, r * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Draw hit feedback flashes
+  for (let i = rhythmBallFlashes.length - 1; i >= 0; i--) {
+    const f = rhythmBallFlashes[i];
+    f.timer -= dt;
+    if (f.timer <= 0) {
+      rhythmBallFlashes.splice(i, 1);
+      continue;
+    }
+
+    const t = f.timer / 0.35; // normalize 0→1
+    const flashR = r + (1 - t) * 12; // expand on hit
+
+    // Color based on judgment
+    let col, glowCol;
+    if (f.judgment === 'PERFECT') {
+      col = '#ffffff';
+      glowCol = '#ffffff';
+    } else if (f.judgment === 'GREAT') {
+      col = '#ffdd88';
+      glowCol = '#ffcc44';
+    } else if (f.judgment === 'GOOD') {
+      col = '#ff9933';
+      glowCol = '#ff8822';
+    } else if (f.judgment === 'BAD') {
+      col = '#dd4422';
+      glowCol = '#cc2200';
+    } else {
+      col = '#ff2244';
+      glowCol = '#ff0022';
+    }
+
+    ctx.globalAlpha = t * 0.9;
+    ctx.fillStyle = col;
+    ctx.shadowColor = glowCol;
+    ctx.shadowBlur = 20 * t;
+
+    // Flash at center (both balls merged)
+    ctx.beginPath();
+    ctx.arc(VX, targetY, flashR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// Add rhythm ball flash on judgment
+function addRhythmBallFlash(judgment) {
+  rhythmBallFlashes.push({ judgment, timer: 0.35 });
+}
+
+// ============================================================
 // RENDERING: Obstacles
 // ============================================================
 function drawObstacles() {
@@ -1099,63 +1218,174 @@ function drawCharacter() {
   ctx.ellipse(0, 2 + bounce, 20, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // --- Cute Chibi Character (front-facing) ---
+  // --- Chibi Character: Blonde angel with punk outfit ---
 
-  // Legs (short stubby, skin-colored)
-  ctx.fillStyle = '#ffe5d0';
+  // GOLDEN WINGS (behind body)
+  const wingBob = Math.sin(phase * 0.8) * 3;
+  ctx.fillStyle = '#e8c840';
+  ctx.strokeStyle = '#d4a828';
+  ctx.lineWidth = 0.8;
+  // Left wing
+  ctx.save();
+  ctx.translate(-10, -18 + wingBob);
+  ctx.rotate(-0.3);
   ctx.beginPath();
-  ctx.ellipse(-6 - legSwing * 0.3, -3, 5, 7, 0, 0, Math.PI * 2);
+  ctx.moveTo(0, 0);
+  ctx.quadraticCurveTo(-20, -8, -30, -2);
+  ctx.quadraticCurveTo(-26, -14, -34, -10);
+  ctx.quadraticCurveTo(-28, -20, -32, -18);
+  ctx.quadraticCurveTo(-22, -24, -18, -16);
+  ctx.quadraticCurveTo(-12, -20, -8, -14);
+  ctx.quadraticCurveTo(-4, -16, 0, -8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Wing feather highlights
+  ctx.fillStyle = '#f0d860';
+  ctx.globalAlpha = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(-2, -4);
+  ctx.quadraticCurveTo(-14, -12, -20, -14);
+  ctx.quadraticCurveTo(-12, -8, -2, -2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+  // Right wing
+  ctx.save();
+  ctx.translate(10, -18 + wingBob);
+  ctx.rotate(0.3);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.quadraticCurveTo(20, -8, 30, -2);
+  ctx.quadraticCurveTo(26, -14, 34, -10);
+  ctx.quadraticCurveTo(28, -20, 32, -18);
+  ctx.quadraticCurveTo(22, -24, 18, -16);
+  ctx.quadraticCurveTo(12, -20, 8, -14);
+  ctx.quadraticCurveTo(4, -16, 0, -8);
+  ctx.closePath();
+  ctx.fillStyle = '#e8c840';
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#f0d860';
+  ctx.globalAlpha = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(2, -4);
+  ctx.quadraticCurveTo(14, -12, 20, -14);
+  ctx.quadraticCurveTo(12, -8, 2, -2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // Legs (jeans / denim blue)
+  ctx.fillStyle = '#6688aa';
+  ctx.beginPath();
+  ctx.ellipse(-5 - legSwing * 0.3, -3, 5, 8, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.ellipse(6 + legSwing * 0.3, -3, 5, 7, 0, 0, Math.PI * 2);
+  ctx.ellipse(5 + legSwing * 0.3, -3, 5, 8, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Shoes (red boots)
-  ctx.fillStyle = '#dd3355';
+  // Shoes (dark boots)
+  ctx.fillStyle = '#333344';
   ctx.beginPath();
-  ctx.ellipse(-6 - legSwing * 0.3, 3, 5, 3, 0, 0, Math.PI * 2);
+  ctx.ellipse(-5 - legSwing * 0.3, 4, 5, 3, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.ellipse(6 + legSwing * 0.3, 3, 5, 3, 0, 0, Math.PI * 2);
+  ctx.ellipse(5 + legSwing * 0.3, 4, 5, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Blue lace accents
+  ctx.fillStyle = '#4466cc';
+  ctx.beginPath();
+  ctx.ellipse(-5 - legSwing * 0.3, 3, 2, 0.8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(5 + legSwing * 0.3, 3, 2, 0.8, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Body (round, small — white blouse with red ribbon)
+  // Body / Torso (punk black shirt with skull)
   const bodyGrad = ctx.createLinearGradient(0, -22, 0, -6);
-  bodyGrad.addColorStop(0, '#ffffff');
-  bodyGrad.addColorStop(1, '#f0e8f0');
+  bodyGrad.addColorStop(0, '#222222');
+  bodyGrad.addColorStop(1, '#333333');
   ctx.fillStyle = bodyGrad;
   ctx.beginPath();
   ctx.ellipse(0, -14, 12, 10, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Red skirt bottom
-  ctx.fillStyle = '#dd3355';
-  ctx.beginPath();
-  ctx.ellipse(0, -7, 14, 5, 0, 0, Math.PI);
-  ctx.fill();
+  // Pink horizontal stripes on shirt (punk style)
+  ctx.fillStyle = '#cc4488';
+  ctx.globalAlpha = 0.6;
+  ctx.fillRect(-10, -19, 20, 2);
+  ctx.fillRect(-10, -15, 20, 2);
+  ctx.fillRect(-10, -11, 20, 2);
+  ctx.globalAlpha = 1;
 
-  // Red ribbon / bow at collar
-  ctx.fillStyle = '#ff3366';
+  // Skull on shirt
+  ctx.fillStyle = '#ffffff';
   ctx.beginPath();
-  ctx.ellipse(-5, -22, 4, 2.5, -0.3, 0, Math.PI * 2);
+  ctx.ellipse(0, -14, 4, 3.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Skull eyes
+  ctx.fillStyle = '#222222';
+  ctx.beginPath();
+  ctx.arc(-1.5, -14.5, 1, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.ellipse(5, -22, 4, 2.5, 0.3, 0, Math.PI * 2);
+  ctx.arc(1.5, -14.5, 1, 0, Math.PI * 2);
   ctx.fill();
-  // Bow center
-  ctx.fillStyle = '#cc1144';
-  ctx.beginPath();
-  ctx.arc(0, -22, 2.5, 0, Math.PI * 2);
-  ctx.fill();
+  // Skull jaw
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(-2.5, -11.5, 5, 2);
+  ctx.fillStyle = '#222222';
+  for (let i = -2; i <= 2; i++) {
+    ctx.fillRect(i * 1.2 - 0.3, -11.5, 0.6, 2);
+  }
 
-  // Arms (white sleeves)
+  // Pink scarf / collar
+  ctx.fillStyle = '#dd5599';
+  ctx.beginPath();
+  ctx.ellipse(0, -22, 11, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Scarf black stripes
+  ctx.fillStyle = '#222222';
+  ctx.globalAlpha = 0.5;
+  for (let sx = -9; sx < 9; sx += 4) {
+    ctx.fillRect(sx, -24, 1.5, 4);
+  }
+  ctx.globalAlpha = 1;
+
+  // Arms (black sleeves)
   const armSwing = isRunning ? Math.sin(phase + Math.PI) * 8 : 0;
-  ctx.fillStyle = '#f0e8f0';
+  ctx.fillStyle = '#333333';
   ctx.beginPath();
   ctx.ellipse(-14 - armSwing * 0.2, -16, 4, 6, 0.3, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
   ctx.ellipse(14 + armSwing * 0.2, -16, 4, 6, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Wristbands (studded, dark)
+  ctx.fillStyle = '#444444';
+  ctx.beginPath();
+  ctx.ellipse(-14 - armSwing * 0.2, -12, 3.5, 2, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(14 + armSwing * 0.2, -12, 3.5, 2, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+  // Studs
+  ctx.fillStyle = '#cccccc';
+  ctx.beginPath();
+  ctx.arc(-15 - armSwing * 0.2, -12, 0.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(-13 - armSwing * 0.2, -12, 0.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(15 + armSwing * 0.2, -12, 0.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(13 + armSwing * 0.2, -12, 0.8, 0, Math.PI * 2);
   ctx.fill();
 
   // Hands (round, skin)
@@ -1171,48 +1401,16 @@ function drawCharacter() {
   const headR = 18;
   const headY = -38;
 
-  // Hair base (cherry-pink, covers back of head)
-  ctx.fillStyle = '#ff5588';
+  // Hair base (golden blonde, covers back of head)
+  ctx.fillStyle = '#e8b830';
   ctx.beginPath();
   ctx.arc(0, headY, headR + 2, 0, Math.PI * 2);
   ctx.fill();
 
-  // Face (skin circle, slightly forward)
+  // Face (skin circle)
   ctx.fillStyle = '#ffe5d0';
   ctx.beginPath();
   ctx.arc(0, headY, headR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Cat ears
-  ctx.fillStyle = '#ff5588';
-  // Left ear
-  ctx.beginPath();
-  ctx.moveTo(-12, headY - 14);
-  ctx.lineTo(-18, headY - 30);
-  ctx.lineTo(-4, headY - 18);
-  ctx.closePath();
-  ctx.fill();
-  // Right ear
-  ctx.beginPath();
-  ctx.moveTo(12, headY - 14);
-  ctx.lineTo(18, headY - 30);
-  ctx.lineTo(4, headY - 18);
-  ctx.closePath();
-  ctx.fill();
-
-  // Inner ears (pink)
-  ctx.fillStyle = '#ffaacc';
-  ctx.beginPath();
-  ctx.moveTo(-11, headY - 15);
-  ctx.lineTo(-15, headY - 26);
-  ctx.lineTo(-6, headY - 18);
-  ctx.closePath();
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(11, headY - 15);
-  ctx.lineTo(15, headY - 26);
-  ctx.lineTo(6, headY - 18);
-  ctx.closePath();
   ctx.fill();
 
   // Eyes (big, cute — front-facing chibi eyes)
@@ -1225,8 +1423,8 @@ function drawCharacter() {
   ctx.ellipse(7, headY + 1, 6, 7, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Iris (big, ruby-red)
-  ctx.fillStyle = '#cc2255';
+  // Iris (big, pinkish-purple)
+  ctx.fillStyle = '#bb4488';
   ctx.beginPath();
   ctx.ellipse(-7, headY + 2, 4.5, 5.5, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1234,8 +1432,8 @@ function drawCharacter() {
   ctx.ellipse(7, headY + 2, 4.5, 5.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Pupil (dark red)
-  ctx.fillStyle = '#330011';
+  // Pupil (dark)
+  ctx.fillStyle = '#220022';
   ctx.beginPath();
   ctx.ellipse(-7, headY + 3, 2.5, 3.5, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1267,23 +1465,23 @@ function drawCharacter() {
   ctx.ellipse(12, headY + 6, 4, 2.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Mouth (small, cute cat mouth :3)
+  // Mouth (small smirk)
   ctx.strokeStyle = '#aa5577';
   ctx.lineWidth = 1.2;
   ctx.lineCap = 'round';
-  // Left curve
   ctx.beginPath();
-  ctx.moveTo(-2, headY + 8);
-  ctx.quadraticCurveTo(-4, headY + 11, -6, headY + 9);
-  ctx.stroke();
-  // Right curve
-  ctx.beginPath();
-  ctx.moveTo(2, headY + 8);
-  ctx.quadraticCurveTo(4, headY + 11, 6, headY + 9);
+  ctx.moveTo(-3, headY + 9);
+  ctx.quadraticCurveTo(0, headY + 12, 4, headY + 8);
   ctx.stroke();
 
-  // Hair bangs (front fringe over forehead)
-  ctx.fillStyle = '#ff5588';
+  // Heart mark on cheek (like reference image)
+  ctx.fillStyle = '#cc3366';
+  ctx.font = '5px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('♥', 10, headY + 10);
+
+  // Hair bangs (front fringe over forehead — golden blonde)
+  ctx.fillStyle = '#e8b830';
   ctx.beginPath();
   ctx.moveTo(-headR - 1, headY - 6);
   ctx.quadraticCurveTo(-headR + 2, headY - headR - 4, -6, headY - headR + 2);
@@ -1311,14 +1509,70 @@ function drawCharacter() {
   ctx.closePath();
   ctx.fill();
 
-  // Tail (cute curly tail behind body)
-  ctx.strokeStyle = '#ff5588';
-  ctx.lineWidth = 3;
-  ctx.lineCap = 'round';
+  // Hair highlights (lighter gold streaks)
+  ctx.strokeStyle = '#f0d860';
+  ctx.lineWidth = 1.2;
+  ctx.globalAlpha = 0.6;
   ctx.beginPath();
-  ctx.moveTo(0, -8);
-  ctx.quadraticCurveTo(12, -12, 14, -18);
-  ctx.quadraticCurveTo(16, -24, 10, -22);
+  ctx.moveTo(-8, headY - headR + 4);
+  ctx.quadraticCurveTo(-6, headY - headR + 8, -4, headY - 8);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(4, headY - headR + 4);
+  ctx.quadraticCurveTo(6, headY - headR + 8, 8, headY - 8);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // Crown / headpiece (gold with red gems — matching reference)
+  const crownY = headY - headR - 6;
+  // Crown base (white fuzzy rim)
+  ctx.fillStyle = '#f0ece0';
+  ctx.beginPath();
+  ctx.ellipse(0, crownY + 6, 10, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Crown body (gold)
+  ctx.fillStyle = '#d4a020';
+  ctx.beginPath();
+  ctx.moveTo(-8, crownY + 5);
+  ctx.lineTo(-9, crownY - 4);
+  ctx.lineTo(-4, crownY);
+  ctx.lineTo(0, crownY - 8);
+  ctx.lineTo(4, crownY);
+  ctx.lineTo(9, crownY - 4);
+  ctx.lineTo(8, crownY + 5);
+  ctx.closePath();
+  ctx.fill();
+  // Crown highlight
+  ctx.strokeStyle = '#e8c840';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  // Red gems on crown
+  ctx.fillStyle = '#cc2222';
+  ctx.beginPath();
+  ctx.arc(-5, crownY + 1, 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(5, crownY + 1, 2, 0, Math.PI * 2);
+  ctx.fill();
+  // Center cross/ornament
+  ctx.fillStyle = '#d4a020';
+  ctx.fillRect(-1, crownY - 12, 2, 6);
+  ctx.fillRect(-3, crownY - 10, 6, 2);
+
+  // Long ponytail / hair tail flowing behind
+  ctx.strokeStyle = '#e8b830';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  const tailWave = Math.sin(phase * 0.6) * 4;
+  ctx.beginPath();
+  ctx.moveTo(0, headY + headR - 4);
+  ctx.quadraticCurveTo(6 + tailWave, headY + headR + 10, 4 + tailWave, 0);
+  ctx.stroke();
+  // Thinner end
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(4 + tailWave, 0);
+  ctx.quadraticCurveTo(2 + tailWave * 0.5, 6, 5 + tailWave, 10);
   ctx.stroke();
 
   ctx.restore();
@@ -1404,11 +1658,42 @@ function drawHUD() {
   ctx.font = '11px sans-serif';
   ctx.fillText('BPM ' + BPM + ' — ' + SONGS[selectedSong].name, 18, H - 16);
 
-  // ---- Progress bar ----
+  // ---- Progress bar (bottom of screen) ----
   const now = musicTime();
   const prog = Math.min(1, now / SONG_DURATION);
-  ctx.fillStyle = 'rgba(0,150,255,0.3)';
-  ctx.fillRect(0, H - 3, W * prog, 3);
+
+  // Background track
+  ctx.fillStyle = 'rgba(30,30,60,0.7)';
+  ctx.fillRect(20, H - 18, W - 40, 10);
+
+  // Fill
+  const progGrad = ctx.createLinearGradient(20, 0, W - 40, 0);
+  progGrad.addColorStop(0, '#0088ff');
+  progGrad.addColorStop(0.5, '#00ccff');
+  progGrad.addColorStop(1, '#44ffcc');
+  ctx.fillStyle = progGrad;
+  ctx.fillRect(20, H - 18, (W - 40) * prog, 10);
+
+  // Border
+  ctx.strokeStyle = 'rgba(100,200,255,0.4)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(20, H - 18, W - 40, 10);
+
+  // Progress marker dot
+  const markerX = 20 + (W - 40) * prog;
+  ctx.fillStyle = '#fff';
+  ctx.shadowColor = '#00ccff';
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.arc(markerX, H - 13, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Percentage text
+  ctx.fillStyle = 'rgba(200,230,255,0.7)';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(Math.floor(prog * 100) + '%', W - 22, H - 6);
 
   // ---- Key indicators at bottom ----
   drawKeyIndicators();
@@ -1926,6 +2211,7 @@ function draw() {
   drawGoalLine();
   drawObstacles();
   drawJudgeZone();
+  drawRhythmBalls();
   drawCharacter();
   drawPart();
   drawHUD();
@@ -1948,6 +2234,7 @@ function resetGame() {
   lastJudge = null; judgeTimer = 0;
   beatFlash = 0;
   particles = [];
+  rhythmBallFlashes = [];
   roadScroll = 0; charPhase = 0;
   charAction = 'RUN'; charActionTimer = 0; charJumpY = 0;
   keyFlash = { ArrowLeft: 0, ArrowRight: 0, ArrowDown: 0, ArrowUp: 0 };
