@@ -186,6 +186,15 @@ let customSongBeats = null;     // array of beat times (seconds)
 let isCustomSong = false;       // true when playing a dropped MP3
 let mp3DropZoneHover = false;   // drag hover visual feedback
 let mp3LoadingMsg = '';         // loading status text
+let customDifficulty = 'NORMAL'; // 'NORMAL' or 'HARD' for custom MP3 songs
+
+// Avatar customization state
+let avatarCustom = null;  // null = default, or {hair, shirt, scarf, eyes, skin, wings, boots}
+let avatarDropHover = false;
+let avatarLoadingMsg = '';
+
+// Settings screen state
+let settingsSelection = 0; // 0=volume, 1=avatar drop zone, 2=reset avatar, 3=back
 
 function applyVolume() {
   if (masterGain) masterGain.gain.value = gameVolume * 0.80; // scale to comfortable max
@@ -304,9 +313,10 @@ function estimateBPM(onsets, duration) {
   return bestBPM;
 }
 
-function generateChartFromBeats(beats, bpm, duration) {
+function generateChartFromBeats(beats, bpm, duration, difficulty) {
   const obstacles = [];
   const beatS = 60 / bpm;
+  difficulty = difficulty || 'NORMAL';
 
   // Seeded random
   let seed = bpm * 1000 + Math.floor(duration) * 7;
@@ -320,7 +330,8 @@ function generateChartFromBeats(beats, bpm, duration) {
   const endT = duration - 2.0;
   let lastType = -1;
   let lastTime = -1;
-  const minGap = beatS * 0.4; // minimum gap between obstacles
+  // HARD mode allows tighter gaps (16th note density)
+  const minGap = difficulty === 'HARD' ? beatS * 0.2 : beatS * 0.4;
 
   for (const t of beats) {
     if (t < startT || t > endT) continue;
@@ -350,6 +361,31 @@ function generateChartFromBeats(beats, bpm, duration) {
       judgment: null,
       hitTime: 0
     });
+  }
+
+  // HARD mode: insert additional 16th-note obstacles between existing beats
+  if (difficulty === 'HARD') {
+    const sixteenthS = beatS / 4; // 16th note duration
+    const extraObs = [];
+    for (let i = 0; i < obstacles.length - 1; i++) {
+      const gap = obstacles[i + 1].time - obstacles[i].time;
+      // If gap is large enough, add midpoint obstacles
+      if (gap > sixteenthS * 2.5) {
+        const midT = obstacles[i].time + gap * 0.5;
+        if (midT > startT && midT < endT) {
+          let typeIdx = Math.floor(rand() * 6);
+          if (typeIdx === obstacles[i].type) typeIdx = (typeIdx + 2) % 6;
+          extraObs.push({
+            time: midT,
+            type: OBS_TYPES[typeIdx],
+            judged: false,
+            judgment: null,
+            hitTime: 0
+          });
+        }
+      }
+    }
+    obstacles.push(...extraObs);
   }
 
   obstacles.sort((a, b) => a.time - b.time);
@@ -413,6 +449,96 @@ function handleMP3Drop(file) {
     });
   };
   reader.readAsArrayBuffer(file);
+}
+
+// Handle avatar image drop — analyze dominant colors and generate avatar palette
+function handleAvatarDrop(file) {
+  if (!file || !file.type.startsWith('image/')) {
+    avatarLoadingMsg = 'Not an image file!';
+    setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
+    return;
+  }
+  avatarLoadingMsg = 'Analyzing image...';
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const img = new Image();
+    img.onload = function() {
+      // Draw image to offscreen canvas to extract colors
+      const tmpCanvas = document.createElement('canvas');
+      const tmpCtx = tmpCanvas.getContext('2d');
+      const size = 64; // sample at small resolution
+      tmpCanvas.width = size;
+      tmpCanvas.height = size;
+      tmpCtx.drawImage(img, 0, 0, size, size);
+      const imageData = tmpCtx.getImageData(0, 0, size, size).data;
+
+      // Extract dominant colors using simple clustering
+      const colors = [];
+      for (let i = 0; i < imageData.length; i += 4) {
+        const r = imageData[i], g = imageData[i+1], b = imageData[i+2], a = imageData[i+3];
+        if (a < 128) continue; // skip transparent
+        // Only include colors with some saturation (skip near-gray)
+        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        if (max - min > 30 || max > 200 || min < 50) {
+          colors.push([r, g, b]);
+        }
+      }
+
+      if (colors.length < 10) {
+        avatarLoadingMsg = 'Image too simple — try a colorful image!';
+        setTimeout(() => { avatarLoadingMsg = ''; }, 2500);
+        return;
+      }
+
+      // Sort by brightness and pick representative colors
+      colors.sort((a, b) => (a[0]+a[1]+a[2]) - (b[0]+b[1]+b[2]));
+      const len = colors.length;
+
+      // Pick colors from different regions of the sorted array
+      const darkColor = colors[Math.floor(len * 0.1)];
+      const midDark = colors[Math.floor(len * 0.3)];
+      const midColor = colors[Math.floor(len * 0.5)];
+      const midLight = colors[Math.floor(len * 0.7)];
+      const lightColor = colors[Math.floor(len * 0.9)];
+
+      function toHex(c) {
+        return '#' + c.map(v => Math.min(255, Math.max(0, v)).toString(16).padStart(2, '0')).join('');
+      }
+
+      // Generate avatar palette from image colors
+      avatarCustom = {
+        hair: toHex(midLight),
+        hairHighlight: toHex(lightColor),
+        shirt: toHex(midDark),
+        shirtStripe: toHex(midColor),
+        scarf: toHex(midColor),
+        eyes: toHex(midLight),
+        skin: toHex([
+          Math.min(255, lightColor[0] * 0.9 + 40),
+          Math.min(255, lightColor[1] * 0.85 + 30),
+          Math.min(255, lightColor[2] * 0.8 + 20)
+        ].map(Math.round)),
+        wings: toHex(lightColor),
+        boots: toHex(darkColor),
+        jeans: toHex(midDark),
+        blush: toHex([
+          Math.min(255, midColor[0] * 0.8 + 50),
+          Math.min(255, midColor[1] * 0.5 + 30),
+          Math.min(255, midColor[2] * 0.5 + 40)
+        ].map(Math.round)),
+      };
+
+      avatarLoadingMsg = '✓ Avatar updated from image!';
+      setTimeout(() => { avatarLoadingMsg = ''; }, 3000);
+    };
+    img.onerror = function() {
+      avatarLoadingMsg = 'Failed to load image!';
+      setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
 }
 
 function playKick(time) {
@@ -784,14 +910,35 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
   }
 
-  // Volume control — available on title & song select screens
-  if (gameState === 'SONG_SELECT' || gameState === 'START') {
+  // Volume control — available on settings screen
+  if (gameState === 'SETTINGS') {
     if (e.code === 'Minus' || e.code === 'NumpadSubtract') {
       gameVolume = Math.max(0, gameVolume - 0.05);
       applyVolume();
     } else if (e.code === 'Equal' || e.code === 'NumpadAdd') {
       gameVolume = Math.min(1, gameVolume + 0.05);
       applyVolume();
+    }
+    if (e.code === 'ArrowUp') {
+      settingsSelection = (settingsSelection + 3) % 4; // 0,1,2,3
+    } else if (e.code === 'ArrowDown') {
+      settingsSelection = (settingsSelection + 1) % 4;
+    } else if (e.code === 'ArrowLeft' && settingsSelection === 0) {
+      gameVolume = Math.max(0, gameVolume - 0.05);
+      applyVolume();
+    } else if (e.code === 'ArrowRight' && settingsSelection === 0) {
+      gameVolume = Math.min(1, gameVolume + 0.05);
+      applyVolume();
+    } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 2) {
+      // Reset avatar
+      avatarCustom = null;
+      avatarLoadingMsg = 'Avatar reset to default!';
+      setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
+    } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 3) {
+      // Back to song select
+      gameState = 'SONG_SELECT';
+    } else if (e.code === 'Escape') {
+      gameState = 'SONG_SELECT';
     }
   }
 
@@ -802,6 +949,14 @@ window.addEventListener('keydown', (e) => {
       songSelectIndex = (songSelectIndex + 1) % SONGS.length;
     } else if (e.code === 'Space' || e.code === 'Enter') {
       selectSong(songSelectIndex);
+    } else if (e.code === 'KeyS') {
+      // Open settings
+      gameState = 'SETTINGS';
+      settingsSelection = 0;
+    }
+    // Toggle difficulty for custom songs
+    if (e.code === 'KeyD' && songSelectIndex >= 4) {
+      customDifficulty = customDifficulty === 'NORMAL' ? 'HARD' : 'NORMAL';
     }
   } else if (gameState === 'START' && e.code === 'Space') {
     startGame();
@@ -817,20 +972,28 @@ window.addEventListener('keydown', (e) => {
 
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
-// Drag and drop for MP3 files
+// Drag and drop for MP3 files and avatar images
 canvas.addEventListener('dragover', (e) => {
   e.preventDefault();
   if (gameState === 'SONG_SELECT') mp3DropZoneHover = true;
+  if (gameState === 'SETTINGS') avatarDropHover = true;
 });
 canvas.addEventListener('dragleave', (e) => {
   e.preventDefault();
   mp3DropZoneHover = false;
+  avatarDropHover = false;
 });
 canvas.addEventListener('drop', (e) => {
   e.preventDefault();
   mp3DropZoneHover = false;
-  if (gameState === 'SONG_SELECT' && e.dataTransfer.files.length > 0) {
-    handleMP3Drop(e.dataTransfer.files[0]);
+  avatarDropHover = false;
+  if (e.dataTransfer.files.length > 0) {
+    const file = e.dataTransfer.files[0];
+    if (gameState === 'SONG_SELECT' && file.type.startsWith('audio/')) {
+      handleMP3Drop(file);
+    } else if (gameState === 'SETTINGS' && file.type.startsWith('image/')) {
+      handleAvatarDrop(file);
+    }
   }
 });
 
@@ -1586,6 +1749,15 @@ function drawStar(x, y, scale, color, isLeft) {
 function drawCharacter() {
   const baseY = ROAD_BOTTOM;  // feet ON the road at judgment line
   const phase = charPhase;
+  // Avatar color palette — use custom or default
+  const av = avatarCustom || {
+    hair: '#e8b830', hairHighlight: '#f0d860',
+    shirt: '#222222', shirtStripe: '#cc4488',
+    scarf: '#dd5599', eyes: '#bb4488',
+    skin: '#ffe5d0', wings: '#e8c840',
+    boots: '#333344', jeans: '#6688aa',
+    blush: 'rgba(255,130,170,0.45)',
+  };
 
   // Calculate character position based on action
   let cx = VX;
@@ -1628,8 +1800,8 @@ function drawCharacter() {
 
   // GOLDEN WINGS (behind body)
   const wingBob = Math.sin(phase * 0.8) * 3;
-  ctx.fillStyle = '#e8c840';
-  ctx.strokeStyle = '#d4a828';
+  ctx.fillStyle = av.wings;
+  ctx.strokeStyle = av.wings;
   ctx.lineWidth = 0.8;
   // Left wing
   ctx.save();
@@ -1647,7 +1819,7 @@ function drawCharacter() {
   ctx.fill();
   ctx.stroke();
   // Wing feather highlights
-  ctx.fillStyle = '#f0d860';
+  ctx.fillStyle = av.hairHighlight || av.wings;
   ctx.globalAlpha = 0.5;
   ctx.beginPath();
   ctx.moveTo(-2, -4);
@@ -1670,10 +1842,10 @@ function drawCharacter() {
   ctx.quadraticCurveTo(12, -20, 8, -14);
   ctx.quadraticCurveTo(4, -16, 0, -8);
   ctx.closePath();
-  ctx.fillStyle = '#e8c840';
+  ctx.fillStyle = av.wings;
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = '#f0d860';
+  ctx.fillStyle = av.hairHighlight || av.wings;
   ctx.globalAlpha = 0.5;
   ctx.beginPath();
   ctx.moveTo(2, -4);
@@ -1685,7 +1857,7 @@ function drawCharacter() {
   ctx.restore();
 
   // Legs (jeans / denim blue)
-  ctx.fillStyle = '#6688aa';
+  ctx.fillStyle = av.jeans || '#6688aa';
   ctx.beginPath();
   ctx.ellipse(-5 - legSwing * 0.3, -3, 5, 8, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1694,7 +1866,7 @@ function drawCharacter() {
   ctx.fill();
 
   // Shoes (dark boots)
-  ctx.fillStyle = '#333344';
+  ctx.fillStyle = av.boots;
   ctx.beginPath();
   ctx.ellipse(-5 - legSwing * 0.3, 4, 5, 3, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1712,15 +1884,15 @@ function drawCharacter() {
 
   // Body / Torso (punk black shirt with skull)
   const bodyGrad = ctx.createLinearGradient(0, -22, 0, -6);
-  bodyGrad.addColorStop(0, '#222222');
-  bodyGrad.addColorStop(1, '#333333');
+  bodyGrad.addColorStop(0, av.shirt);
+  bodyGrad.addColorStop(1, av.shirt);
   ctx.fillStyle = bodyGrad;
   ctx.beginPath();
   ctx.ellipse(0, -14, 12, 10, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // Pink horizontal stripes on shirt (punk style)
-  ctx.fillStyle = '#cc4488';
+  ctx.fillStyle = av.shirtStripe || av.scarf;
   ctx.globalAlpha = 0.6;
   ctx.fillRect(-10, -19, 20, 2);
   ctx.fillRect(-10, -15, 20, 2);
@@ -1749,7 +1921,7 @@ function drawCharacter() {
   }
 
   // Pink scarf / collar
-  ctx.fillStyle = '#dd5599';
+  ctx.fillStyle = av.scarf;
   ctx.beginPath();
   ctx.ellipse(0, -22, 11, 3, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1763,7 +1935,7 @@ function drawCharacter() {
 
   // Arms (black sleeves)
   const armSwing = isRunning ? Math.sin(phase + Math.PI) * 8 : 0;
-  ctx.fillStyle = '#333333';
+  ctx.fillStyle = av.shirt;
   ctx.beginPath();
   ctx.ellipse(-14 - armSwing * 0.2, -16, 4, 6, 0.3, 0, Math.PI * 2);
   ctx.fill();
@@ -1795,7 +1967,7 @@ function drawCharacter() {
   ctx.fill();
 
   // Hands (round, skin)
-  ctx.fillStyle = '#ffe0c8';
+  ctx.fillStyle = av.skin;
   ctx.beginPath();
   ctx.arc(-14 - armSwing * 0.2, -11, 3, 0, Math.PI * 2);
   ctx.fill();
@@ -1808,13 +1980,13 @@ function drawCharacter() {
   const headY = -38;
 
   // Hair base (golden blonde, covers back of head)
-  ctx.fillStyle = '#e8b830';
+  ctx.fillStyle = av.hair;
   ctx.beginPath();
   ctx.arc(0, headY, headR + 2, 0, Math.PI * 2);
   ctx.fill();
 
   // Face (skin circle)
-  ctx.fillStyle = '#ffe5d0';
+  ctx.fillStyle = av.skin;
   ctx.beginPath();
   ctx.arc(0, headY, headR, 0, Math.PI * 2);
   ctx.fill();
@@ -1830,7 +2002,7 @@ function drawCharacter() {
   ctx.fill();
 
   // Iris (big, pinkish-purple)
-  ctx.fillStyle = '#bb4488';
+  ctx.fillStyle = av.eyes;
   ctx.beginPath();
   ctx.ellipse(-7, headY + 2, 4.5, 5.5, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1863,7 +2035,7 @@ function drawCharacter() {
   ctx.fill();
 
   // Blush (pink circles on cheeks)
-  ctx.fillStyle = 'rgba(255,130,170,0.45)';
+  ctx.fillStyle = av.blush || 'rgba(255,130,170,0.45)';
   ctx.beginPath();
   ctx.ellipse(-12, headY + 6, 4, 2.5, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1887,7 +2059,7 @@ function drawCharacter() {
   ctx.fillText('♥', 10, headY + 10);
 
   // Hair bangs (front fringe over forehead — golden blonde)
-  ctx.fillStyle = '#e8b830';
+  ctx.fillStyle = av.hair;
   ctx.beginPath();
   ctx.moveTo(-headR - 1, headY - 6);
   ctx.quadraticCurveTo(-headR + 2, headY - headR - 4, -6, headY - headR + 2);
@@ -1916,7 +2088,7 @@ function drawCharacter() {
   ctx.fill();
 
   // Hair highlights (lighter gold streaks)
-  ctx.strokeStyle = '#f0d860';
+  ctx.strokeStyle = av.hairHighlight || av.hair;
   ctx.lineWidth = 1.2;
   ctx.globalAlpha = 0.6;
   ctx.beginPath();
@@ -1949,7 +2121,7 @@ function drawCharacter() {
   ctx.closePath();
   ctx.fill();
   // Crown highlight
-  ctx.strokeStyle = '#e8c840';
+  ctx.strokeStyle = av.wings;
   ctx.lineWidth = 0.8;
   ctx.stroke();
   // Red gems on crown
@@ -2485,6 +2657,210 @@ function drawResultScreen() {
 }
 
 // ============================================================
+// RENDERING: Settings Screen
+// ============================================================
+function drawSettingsScreen() {
+  const t = performance.now() / 1000;
+  const pulse = 0.7 + 0.3 * Math.sin(t * 3);
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Title
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur = 20 * pulse;
+  ctx.font = "bold 60px 'Impact', sans-serif";
+  ctx.fillStyle = `rgba(0,255,200,${pulse})`;
+  ctx.fillText('SETTINGS', VX, 70);
+
+  ctx.shadowBlur = 0;
+
+  // --- Volume (item 0) ---
+  const volY = 160;
+  const isVol = settingsSelection === 0;
+  ctx.fillStyle = isVol ? '#00ffcc' : 'rgba(150,200,255,0.6)';
+  ctx.font = isVol ? 'bold 22px sans-serif' : '20px sans-serif';
+  ctx.fillText('🔊 VOLUME', VX, volY);
+
+  // Volume bar
+  const barW = 200, barH = 12;
+  const barX = VX - barW / 2, barY = volY + 20;
+  ctx.fillStyle = 'rgba(40,40,80,0.7)';
+  ctx.fillRect(barX, barY, barW, barH);
+  ctx.fillStyle = isVol ? '#00ddcc' : 'rgba(0,180,160,0.5)';
+  ctx.fillRect(barX, barY, barW * gameVolume, barH);
+  ctx.strokeStyle = isVol ? '#00ffcc' : 'rgba(100,150,200,0.4)';
+  ctx.lineWidth = isVol ? 2 : 1;
+  ctx.strokeRect(barX, barY, barW, barH);
+  ctx.fillStyle = '#fff';
+  ctx.font = '14px sans-serif';
+  ctx.fillText(Math.round(gameVolume * 100) + '%', VX, volY + 50);
+  if (isVol) {
+    ctx.fillStyle = 'rgba(0,255,200,0.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('← → to adjust', VX, volY + 68);
+  }
+
+  // --- Avatar Drop Zone (item 1) ---
+  const avatarY = 270;
+  const isAvatar = settingsSelection === 1;
+  ctx.fillStyle = isAvatar ? '#ff88cc' : 'rgba(200,150,255,0.6)';
+  ctx.font = isAvatar ? 'bold 22px sans-serif' : '20px sans-serif';
+  ctx.fillText('🎨 AVATAR CHANGE', VX, avatarY);
+
+  // Drop zone
+  const dropW = 300, dropH = 100;
+  const dropX = VX - dropW / 2, dropY = avatarY + 20;
+
+  if (avatarDropHover) {
+    ctx.save();
+    ctx.strokeStyle = '#ff88cc';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([10, 6]);
+    ctx.beginPath();
+    ctx.roundRect(dropX, dropY, dropW, dropH, 12);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,136,204,0.15)';
+    ctx.fill();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ff88cc';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('🖼️ Drop Image Here!', VX, avatarY + 70);
+    ctx.restore();
+  } else {
+    ctx.strokeStyle = isAvatar ? '#ff88cc' : 'rgba(150,100,200,0.4)';
+    ctx.lineWidth = isAvatar ? 2 : 1;
+    ctx.setLineDash([8, 5]);
+    ctx.beginPath();
+    ctx.roundRect(dropX, dropY, dropW, dropH, 12);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = isAvatar ? 'rgba(255,200,230,0.8)' : 'rgba(180,150,220,0.5)';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('Drag & drop an image file here', VX, avatarY + 55);
+    ctx.fillStyle = isAvatar ? 'rgba(255,180,220,0.6)' : 'rgba(150,130,200,0.4)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('Colors from the image will customize your avatar', VX, avatarY + 80);
+  }
+
+  // Current avatar status
+  const statusY = avatarY + 130;
+  if (avatarCustom) {
+    ctx.fillStyle = '#ff88cc';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('✨ Custom avatar active!', VX, statusY);
+    // Show color swatches
+    const swatchColors = [avatarCustom.hair, avatarCustom.shirt, avatarCustom.scarf, avatarCustom.eyes, avatarCustom.wings];
+    swatchColors.forEach((c, i) => {
+      ctx.fillStyle = c;
+      ctx.fillRect(VX - 50 + i * 22, statusY + 12, 18, 12);
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(VX - 50 + i * 22, statusY + 12, 18, 12);
+    });
+  } else {
+    ctx.fillStyle = 'rgba(150,200,255,0.5)';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('Default avatar', VX, statusY);
+  }
+
+  // Avatar loading message
+  if (avatarLoadingMsg) {
+    ctx.fillStyle = '#ff88cc';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(avatarLoadingMsg, VX, statusY + 30);
+  }
+
+  // --- Reset Avatar (item 2) ---
+  const resetY = 480;
+  const isReset = settingsSelection === 2;
+  if (isReset) {
+    ctx.shadowColor = '#ff4444';
+    ctx.shadowBlur = 10;
+  }
+  ctx.fillStyle = isReset ? '#ff6644' : 'rgba(200,100,100,0.5)';
+  ctx.font = isReset ? 'bold 20px sans-serif' : '18px sans-serif';
+  ctx.fillText('🔄 Reset Avatar to Default', VX, resetY);
+  ctx.shadowBlur = 0;
+  if (isReset) {
+    ctx.fillStyle = 'rgba(255,100,80,0.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('Press SPACE to reset', VX, resetY + 22);
+  }
+
+  // --- Back (item 3) ---
+  const backY = 540;
+  const isBack = settingsSelection === 3;
+  if (isBack) {
+    ctx.shadowColor = '#ffee00';
+    ctx.shadowBlur = 10;
+  }
+  ctx.fillStyle = isBack ? '#ffee00' : 'rgba(200,200,100,0.5)';
+  ctx.font = isBack ? 'bold 20px sans-serif' : '18px sans-serif';
+  ctx.fillText('← Back to Song Select', VX, backY);
+  ctx.shadowBlur = 0;
+  if (isBack) {
+    ctx.fillStyle = 'rgba(255,238,0,0.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('Press SPACE or ESC', VX, backY + 22);
+  }
+
+  // Navigation hint
+  ctx.fillStyle = 'rgba(150,200,255,0.4)';
+  ctx.font = '12px sans-serif';
+  ctx.fillText('↑ ↓ to navigate  |  SPACE to confirm  |  ESC to go back', VX, H - 20);
+
+  // Draw avatar preview on the right
+  ctx.save();
+  ctx.translate(W - 120, 350);
+  ctx.scale(0.6, 0.6);
+  // Mini avatar preview (draw a simplified version)
+  const av = avatarCustom || {
+    hair: '#e8b830', hairHighlight: '#f0d860',
+    shirt: '#222222', shirtStripe: '#cc4488',
+    scarf: '#dd5599', eyes: '#bb4488',
+    skin: '#ffe5d0', wings: '#e8c840',
+    boots: '#333344', jeans: '#6688aa',
+    blush: 'rgba(255,130,170,0.45)',
+  };
+  // Simple preview circle head
+  ctx.fillStyle = av.hair;
+  ctx.beginPath();
+  ctx.arc(0, -20, 28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = av.skin;
+  ctx.beginPath();
+  ctx.arc(0, -20, 25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = av.eyes;
+  ctx.beginPath();
+  ctx.arc(-8, -18, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(8, -18, 6, 0, Math.PI * 2);
+  ctx.fill();
+  // Body
+  ctx.fillStyle = av.shirt;
+  ctx.beginPath();
+  ctx.ellipse(0, 14, 18, 16, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = av.scarf;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 16, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Label
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Preview', 0, 55);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+// ============================================================
 // RENDERING: Song Select Screen
 // ============================================================
 function drawSongSelectScreen() {
@@ -2577,6 +2953,18 @@ function drawSongSelectScreen() {
   ctx.font = '14px sans-serif';
   ctx.fillText('← → to select, SPACE to confirm', VX, 440);
 
+  // Difficulty selector for custom songs
+  if (songSelectIndex >= 4 && customAudioBuffer) {
+    const diffY = 462;
+    ctx.fillStyle = '#00ff88';
+    ctx.font = 'bold 16px sans-serif';
+    const diffLabel = customDifficulty === 'HARD' ? '🔥 HARD (16th notes)' : '🎵 NORMAL';
+    ctx.fillText('Difficulty: ' + diffLabel, VX, diffY);
+    ctx.fillStyle = 'rgba(0,255,136,0.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('Press D to toggle difficulty', VX, diffY + 18);
+  }
+
   // Controls reminder
   ctx.shadowBlur = 0;
   ctx.font = '13px sans-serif';
@@ -2586,7 +2974,7 @@ function drawSongSelectScreen() {
     '🌉 Arch → press ↓ DOWN            🧱 Block → press ↑ UP',
     '⭐ Star RIGHT → press → RIGHT     ⭐ Star LEFT → press ← LEFT',
   ];
-  lines.forEach(function(l, idx) { ctx.fillText(l, VX, 490 + idx * 22); });
+  lines.forEach(function(l, idx) { ctx.fillText(l, VX, 500 + idx * 20); });
 
    // Press space
   const sp = 0.5 + 0.5 * Math.sin(t * 4);
@@ -2594,7 +2982,13 @@ function drawSongSelectScreen() {
   ctx.shadowBlur = 12 * sp;
   ctx.fillStyle = `rgba(255,238,0,${sp})`;
   ctx.font = 'bold 18px sans-serif';
-  ctx.fillText('PRESS SPACE TO START', VX, H - 50);
+  ctx.fillText('PRESS SPACE TO START', VX, H - 60);
+
+  // Settings link
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(200,180,255,0.6)';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('⚙ Press S for Settings (Volume & Avatar)', VX, H - 38);
 
   // MP3 drop zone indicator
   ctx.shadowBlur = 0;
@@ -2616,18 +3010,17 @@ function drawSongSelectScreen() {
   } else {
     ctx.fillStyle = 'rgba(0,255,136,0.4)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('🎵 Drag & drop an MP3 file to add a custom song', VX, 558);
+    ctx.fillText('🎵 Drag & drop an MP3 file to add a custom song', VX, 570);
   }
 
   // MP3 loading message
   if (mp3LoadingMsg) {
     ctx.fillStyle = '#00ff88';
     ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(mp3LoadingMsg, VX, 572);
+    ctx.fillText(mp3LoadingMsg, VX, 584);
   }
 
   ctx.restore();
-  drawVolumeUI();
 }
 
 // ============================================================
@@ -2636,6 +3029,13 @@ function drawSongSelectScreen() {
 function draw() {
   ctx.clearRect(0, 0, W, H);
   drawBg();
+
+  if (gameState === 'SETTINGS') {
+    drawTrack();
+    drawCharacter();
+    drawSettingsScreen();
+    return;
+  }
 
   if (gameState === 'SONG_SELECT') {
     drawTrack();
@@ -2683,7 +3083,7 @@ function resetGame() {
 
   // Use beat-detected chart for custom MP3, normal generator otherwise
   if (isCustomSong && customSongBeats) {
-    obstacles = generateChartFromBeats(customSongBeats, BPM, SONG_DURATION);
+    obstacles = generateChartFromBeats(customSongBeats, BPM, SONG_DURATION, customDifficulty);
   } else {
     obstacles = generateChart();
   }
