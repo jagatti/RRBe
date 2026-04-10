@@ -114,7 +114,7 @@ obstacle reaches the **judgment zone** near the character:
 BGM is entirely synthesized at runtime using the **Web Audio API** — no
 external audio files required.
 
-- **BPM**: 160
+- **BPM**: 130 / 150 / 180 (selectable from 3 songs)
 - **Kick drum**: 4-on-the-floor pattern
 - **Snare**: Beats 2 & 4
 - **Hi-hat**: 16th-note pattern with open hi-hats on off-beats
@@ -122,7 +122,8 @@ external audio files required.
 - **Lead Synth**: Square-wave melody on a pentatonic scale
 
 Obstacles are generated in sync with the beat, with difficulty ramping from
-simple half-note patterns to dense 16th-note sequences.
+simple half-note patterns to dense 8th-note sequences. Players can choose
+from 3 songs at different BPMs before starting.
 
 ---
 
