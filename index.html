@@ -17,11 +17,12 @@ canvas{display:block;cursor:none}
 // ============================================================
 const W = 960, H = 640;
 
-// Song definitions — 3 songs at different BPMs
+// Song definitions — 4 songs at different BPMs
 const SONGS = [
   { name: 'City Pop Groove', bpm: 130, bars: 48, color: '#44ccff', desc: 'BPM 130 — Mellow & Groovy' },
   { name: 'Neon Rush',       bpm: 150, bars: 48, color: '#ffcc00', desc: 'BPM 150 — Synth Drive' },
   { name: 'Hyper Drive',     bpm: 180, bars: 48, color: '#ff4488', desc: 'BPM 180 — Intense' },
+  { name: 'Chaos Protocol',  bpm: 170, bars: 56, color: '#cc44ff', desc: 'BPM 170 — 16th Expert' },
 ];
 let selectedSong = 0;
 
@@ -141,6 +142,22 @@ const SONG_DATA = [
     synthGain: 0.14,
     bassGain: 0.55,
     kickPitch: 200,
+  },
+  // Song 3: Chaos Protocol (BPM 170) — dark, chaotic, glitchy breakcore
+  {
+    bass: [55, 65.4, 55, 73.4, 55, 55, 82.4, 65.4, 73.4, 55, 65.4, 82.4, 55, 73.4, 65.4, 55],
+    scale: [246.94, 277.18, 311.13, 329.63, 369.99, 415.30, 466.16, 523.25, 554.37, 622.25],
+    melody: [0, 3, 5, 7, 9, -1, 6, 2, 8, 4, 1, 5, 9, 7, -1, 3, 6, 8, 2, 0, 4, -1, 7, 9, 1, 5, 3, 8, 6, -1, 0, 4],
+    kick: new Set([0, 3, 6, 8, 11, 14]),
+    snare: new Set([4, 7, 12, 15]),
+    ohihat: new Set([1, 2, 5, 9, 10, 13]),
+    bassSteps: new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+    synthSteps: new Set([0, 2, 3, 5, 6, 8, 10, 11, 13, 14]),
+    synthType: 'sawtooth',
+    bassFilter: 600,
+    synthGain: 0.13,
+    bassGain: 0.50,
+    kickPitch: 210,
   }
 ];
 let curSongData = SONG_DATA[0];
@@ -329,6 +346,10 @@ function generateChart() {
   const normalSteps = [0, 4, 8, 12];              // quarter-note feel
   const hardSteps   = [0, 4, 6, 8, 12, 14];       // 8th-note syncopation
   const expertSteps = [0, 2, 4, 6, 8, 10, 12, 14]; // 8th-note full
+  // 16th-note patterns for Chaos Protocol (song 3)
+  const expert16thA = [0, 2, 3, 4, 6, 8, 10, 11, 12, 14]; // 16th bursts mixed with 8ths
+  const expert16thB = [0, 1, 4, 6, 7, 8, 10, 12, 13, 14, 15]; // dense 16th runs
+  const expert16thC = [0, 2, 4, 5, 6, 8, 10, 12, 13, 14];    // syncopated 16ths
 
   // Type selection weighted by musical position
   // Kick positions → BLOCK(jump) or PYLON, Snare → ARCH(duck) or STAR, Offbeat → varied
@@ -370,10 +391,21 @@ function generateChart() {
 
     // Select pattern density based on song progression
     let steps;
-    if (bar < 10)      steps = easySteps;
-    else if (bar < 22) steps = normalSteps;
-    else if (bar < 38) steps = hardSteps;
-    else               steps = expertSteps;
+    const isChaos = selectedSong === 3; // Chaos Protocol — 16th-note expert
+    if (isChaos) {
+      // Chaos Protocol: ramp quickly into 16th-note density
+      if (bar < 4)       steps = normalSteps;
+      else if (bar < 10) steps = hardSteps;
+      else if (bar < 18) steps = expertSteps;
+      else if (bar < 28) steps = expert16thA;
+      else if (bar < 40) steps = expert16thB;
+      else               steps = expert16thC;
+    } else {
+      if (bar < 10)      steps = easySteps;
+      else if (bar < 22) steps = normalSteps;
+      else if (bar < 38) steps = hardSteps;
+      else               steps = expertSteps;
+    }
 
     // Add musical variation: occasional rest bars for breathing room
     if (bar > 4 && bar % 8 === 0 && bar < SONG_BARS - 4) {
@@ -2189,9 +2221,11 @@ function drawSongSelectScreen() {
   for (let i = 0; i < SONGS.length; i++) {
     const song = SONGS[i];
     const isSelected = i === songSelectIndex;
-    const cardX = VX - 180 + i * 180;
+    const cardSpacing = SONGS.length <= 3 ? 180 : 150;
+    const totalW = (SONGS.length - 1) * cardSpacing;
+    const cardX = VX - totalW / 2 + i * cardSpacing;
     const cardY = 300;
-    const cardW = 150;
+    const cardW = SONGS.length <= 3 ? 150 : 130;
     const cardH = 180;
 
     // Card background
