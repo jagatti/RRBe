@@ -19,9 +19,9 @@ const W = 960, H = 640;
 
 // Song definitions — 3 songs at different BPMs
 const SONGS = [
-  { name: 'City Pop Groove', bpm: 130, bars: 48, color: '#44ccff', desc: 'BPM 130 — Easy' },
-  { name: 'Neon Rush',       bpm: 150, bars: 48, color: '#ffcc00', desc: 'BPM 150 — Normal' },
-  { name: 'Hyper Drive',     bpm: 180, bars: 48, color: '#ff4488', desc: 'BPM 180 — Hard' },
+  { name: 'City Pop Groove', bpm: 130, bars: 48, color: '#44ccff', desc: 'BPM 130 — Mellow & Groovy' },
+  { name: 'Neon Rush',       bpm: 150, bars: 48, color: '#ffcc00', desc: 'BPM 150 — Synth Drive' },
+  { name: 'Hyper Drive',     bpm: 180, bars: 48, color: '#ff4488', desc: 'BPM 180 — Intense' },
 ];
 let selectedSong = 0;
 
@@ -92,23 +92,58 @@ const JUDGE_SCORE = { PERFECT: 100, GREAT: 80, GOOD: 50, BAD: 20, MISS: 0 };
 // Character action durations
 const ACTION_DUR = 0.18;
 
-// Audio — energetic track (BPM set by song selection)
-// Minor key bass line for more drive
-const BASS_NOTES = [82.4, 82.4, 110, 98, 73.4, 73.4, 98, 110, 82.4, 65.4, 73.4, 98, 110, 82.4, 65.4, 73.4];
-// Mixolydian / minor penta scale for melody
-const PENTA = [329.63, 369.99, 392, 440, 493.88, 523.25, 587.33, 659.25, 739.99, 783.99];
-const MELODY = [
-  0, -1, 4,  2,  7, -1, 5,  3,
-  1, -1, 6,  4,  9,  7, 5,  3,
-  2, -1, 4,  7,  9, -1, 6,  4,
-  5,  3, 1,  0,  2, -1, 4,  7
+// Audio — per-song musical data for distinct atmospheres
+// Song 0: City Pop Groove (BPM 130) — mellow, groovy, jazzy chords
+const SONG_DATA = [
+  {
+    bass: [65.4, 65.4, 82.4, 73.4, 65.4, 73.4, 82.4, 73.4, 87.3, 87.3, 98, 82.4, 73.4, 82.4, 98, 87.3],
+    scale: [261.63, 293.66, 329.63, 349.23, 392, 440, 493.88, 523.25, 587.33, 659.25],
+    melody: [0, -1, 2, 4, 6, -1, 4, 2, 3, -1, 5, 7, 9, -1, 7, 5, 4, -1, 6, 2, 0, -1, 2, 4, 3, 5, 7, 4, 2, -1, 0, 2],
+    kick: new Set([0, 8]),
+    snare: new Set([4, 12]),
+    ohihat: new Set([2, 6, 10, 14]),
+    bassSteps: new Set([0, 4, 8, 12]),
+    synthSteps: new Set([0, 4, 8, 12]),
+    synthType: 'sine',
+    bassFilter: 350,
+    synthGain: 0.10,
+    bassGain: 0.4,
+    kickPitch: 160,
+  },
+  // Song 1: Neon Rush (BPM 150) — energetic, driving synth-pop
+  {
+    bass: [82.4, 82.4, 110, 98, 73.4, 73.4, 98, 110, 82.4, 65.4, 73.4, 98, 110, 82.4, 65.4, 73.4],
+    scale: [329.63, 369.99, 392, 440, 493.88, 523.25, 587.33, 659.25, 739.99, 783.99],
+    melody: [0, -1, 4, 2, 7, -1, 5, 3, 1, -1, 6, 4, 9, 7, 5, 3, 2, -1, 4, 7, 9, -1, 6, 4, 5, 3, 1, 0, 2, -1, 4, 7],
+    kick: new Set([0, 4, 8, 12]),
+    snare: new Set([4, 12]),
+    ohihat: new Set([2, 6, 10, 14]),
+    bassSteps: new Set([0, 2, 4, 6, 8, 10, 12, 14]),
+    synthSteps: new Set([0, 2, 4, 8, 10, 12]),
+    synthType: 'square',
+    bassFilter: 400,
+    synthGain: 0.12,
+    bassGain: 0.5,
+    kickPitch: 180,
+  },
+  // Song 2: Hyper Drive (BPM 180) — intense, aggressive, heavy bass
+  {
+    bass: [55, 55, 73.4, 65.4, 55, 65.4, 73.4, 82.4, 55, 55, 82.4, 73.4, 65.4, 73.4, 82.4, 98],
+    scale: [220, 261.63, 293.66, 329.63, 392, 440, 523.25, 587.33, 659.25, 783.99],
+    melody: [2, 4, 6, -1, 8, 6, 4, 2, 0, 2, 4, 6, 9, -1, 7, 5, 4, 6, 8, 9, 7, 5, 4, 2, 0, -1, 2, 4, 6, 8, 9, 7],
+    kick: new Set([0, 2, 4, 6, 8, 10, 12, 14]),
+    snare: new Set([4, 12]),
+    ohihat: new Set([1, 3, 5, 7, 9, 11, 13, 15]),
+    bassSteps: new Set([0, 2, 4, 6, 8, 10, 12, 14]),
+    synthSteps: new Set([0, 2, 4, 6, 8, 10, 12, 14]),
+    synthType: 'sawtooth',
+    bassFilter: 500,
+    synthGain: 0.14,
+    bassGain: 0.55,
+    kickPitch: 200,
+  }
 ];
-
-const KICK_STEPS   = new Set([0, 4, 8, 12]);
-const SNARE_STEPS  = new Set([4, 12]);
-const OHIHAT_STEPS = new Set([2, 6, 10, 14]);
-const BASS_STEPS   = new Set([0, 2, 4, 6, 8, 10, 12, 14]);
-const SYNTH_STEPS  = new Set([0, 2, 4, 8, 10, 12]);
+let curSongData = SONG_DATA[0];
 
 // ============================================================
 // CANVAS
@@ -142,7 +177,7 @@ function playKick(time) {
   const o = audioCtx.createOscillator(), g = audioCtx.createGain();
   o.connect(g); g.connect(masterGain);
   o.type = 'sine';
-  o.frequency.setValueAtTime(180, time);
+  o.frequency.setValueAtTime(curSongData.kickPitch, time);
   o.frequency.exponentialRampToValueAtTime(40, time + 0.08);
   g.gain.setValueAtTime(1.0, time);
   g.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
@@ -183,10 +218,10 @@ function playBass(time, freq, dur) {
   const o = audioCtx.createOscillator();
   const f = audioCtx.createBiquadFilter();
   const g = audioCtx.createGain();
-  o.type = 'sawtooth'; f.type = 'lowpass'; f.frequency.value = 400;
+  o.type = 'sawtooth'; f.type = 'lowpass'; f.frequency.value = curSongData.bassFilter;
   o.connect(f); f.connect(g); g.connect(masterGain);
   o.frequency.setValueAtTime(freq, time);
-  g.gain.setValueAtTime(0.5, time);
+  g.gain.setValueAtTime(curSongData.bassGain, time);
   g.gain.exponentialRampToValueAtTime(0.001, time + dur);
   o.start(time); o.stop(time + dur);
 }
@@ -194,12 +229,12 @@ function playBass(time, freq, dur) {
 function playSynth(time, freq, dur) {
   const o1 = audioCtx.createOscillator(), o2 = audioCtx.createOscillator();
   const g = audioCtx.createGain();
-  o1.type = 'square'; o2.type = 'square';
+  o1.type = curSongData.synthType; o2.type = curSongData.synthType;
   o1.frequency.setValueAtTime(freq, time);
   o2.frequency.setValueAtTime(freq * 1.006, time);
   o1.connect(g); o2.connect(g); g.connect(masterGain);
-  g.gain.setValueAtTime(0.12, time);
-  g.gain.setValueAtTime(0.12, time + dur * 0.75);
+  g.gain.setValueAtTime(curSongData.synthGain, time);
+  g.gain.setValueAtTime(curSongData.synthGain, time + dur * 0.75);
   g.gain.exponentialRampToValueAtTime(0.001, time + dur);
   o1.start(time); o2.start(time);
   o1.stop(time + dur); o2.stop(time + dur);
@@ -244,19 +279,20 @@ function sfxMiss(t) {
 // Audio scheduler
 function scheduleAudio() {
   if (!audioCtx || (gameState !== 'PLAYING' && gameState !== 'READY_GO')) return;
+  const sd = curSongData;
   while (nextStepTime < audioCtx.currentTime + 0.1) {
     const step = stepCount % 16;
     const t = nextStepTime;
-    if (KICK_STEPS.has(step))  playKick(t);
-    if (SNARE_STEPS.has(step)) playSnare(t);
-    if (OHIHAT_STEPS.has(step)) playHihat(t, true);
+    if (sd.kick.has(step))  playKick(t);
+    if (sd.snare.has(step)) playSnare(t);
+    if (sd.ohihat.has(step)) playHihat(t, true);
     else playHihat(t, false);
-    if (BASS_STEPS.has(step)) {
-      playBass(t, BASS_NOTES[Math.floor(stepCount / 2) % BASS_NOTES.length]);
+    if (sd.bassSteps.has(step)) {
+      playBass(t, sd.bass[Math.floor(stepCount / 2) % sd.bass.length]);
     }
-    if (SYNTH_STEPS.has(step)) {
-      const ni = MELODY[melodyPos % MELODY.length];
-      if (ni >= 0) playSynth(t, PENTA[ni % PENTA.length], BEAT_S * 0.85);
+    if (sd.synthSteps.has(step)) {
+      const ni = sd.melody[melodyPos % sd.melody.length];
+      if (ni >= 0) playSynth(t, sd.scale[ni % sd.scale.length], BEAT_S * 0.85);
       melodyPos++;
     }
     if (step === 0) { beatCount++; beatFlash = 1.0; }
@@ -1041,13 +1077,13 @@ function drawObstacles() {
   visible.sort((a, b) => a.z - b.z);
 
   for (const { obs: o, z } of visible) {
-    if (z < 0.40) continue;
+    if (z < 0.25) continue;
 
     // Use road perspective mapping so obstacles move WITH the road surface
     const s = zToScreen(z);
     const y = s.y;
-    // Linear scale from z: small(0.50) → medium(0.70) — gentle size progression
-    const scale = 0.50 + (Math.min(1.0, z) - 0.40) / 0.60 * 0.20;
+    // Linear scale from z: small(0.45) → medium(0.70) — gentle size progression, starts further back
+    const scale = 0.45 + (Math.min(1.0, z) - 0.25) / 0.75 * 0.25;
 
     // Alpha: fade in gradually from far, dim if missed
     let alpha = Math.min(1, s.t * 2.5);
@@ -1645,25 +1681,25 @@ function drawHUD() {
     ctx.fillRect(0, 0, W, H);
   }
 
-  // ---- Combo (top center, subtle) ----
+  // ---- Combo (top center, larger) ----
   if (combo > 0) {
-    const comboSize = Math.min(44, 30 + combo * 0.15);
+    const comboSize = Math.min(60, 42 + combo * 0.2);
 
     ctx.save();
-    ctx.translate(VX, 48);
+    ctx.translate(VX, 52);
 
     ctx.shadowColor = '#ffcc00';
-    ctx.shadowBlur = 8;
-    ctx.fillStyle = 'rgba(255,238,68,0.85)';
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = 'rgba(255,238,68,0.9)';
     ctx.font = `bold ${comboSize}px 'Impact', sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(combo, 0, 0);
 
     ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255,204,0,0.6)';
-    ctx.font = 'bold 13px sans-serif';
-    ctx.fillText('COMBO', 0, comboSize / 2 + 10);
+    ctx.fillStyle = 'rgba(255,204,0,0.7)';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('COMBO', 0, comboSize / 2 + 12);
 
     ctx.restore();
   }
@@ -2309,6 +2345,7 @@ function selectSong(idx) {
   STEP_S = BEAT_S / 4;
   SONG_BARS = song.bars;
   SONG_DURATION = SONG_BARS * 4 * BEAT_S;
+  curSongData = SONG_DATA[idx];
   gameState = 'START';
 }
 
