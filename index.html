@@ -1041,14 +1041,13 @@ function drawObstacles() {
   visible.sort((a, b) => a.z - b.z);
 
   for (const { obs: o, z } of visible) {
-    if (z < 0.30) continue;
+    if (z < 0.40) continue;
 
     // Use road perspective mapping so obstacles move WITH the road surface
     const s = zToScreen(z);
     const y = s.y;
-    // Narrow scale range: min 0.45, max 0.95 — obstacles don't change size drastically
-    const rawScale = Math.max(0.45, s.t);
-    const scale = Math.min(0.95, rawScale);
+    // Linear scale from z: small(0.50) → medium(0.70) — gentle size progression
+    const scale = 0.50 + (Math.min(1.0, z) - 0.40) / 0.60 * 0.20;
 
     // Alpha: fade in gradually from far, dim if missed
     let alpha = Math.min(1, s.t * 2.5);
@@ -1126,10 +1125,12 @@ function drawPylon(x, y, scale, color, isLeft) {
 }
 
 function drawArch(x, y, scale, color) {
-  // Arch / gate shape - overhead obstacle with rounded top
-  const w = 90 * scale;
-  const h = 100 * scale;  // taller apex
+  // Arch / gate shape — ∩ shape: tall posts with deep rounded ceiling
+  const w = 80 * scale;
+  const h = 110 * scale;   // total height
   const postW = 12 * scale;
+  const postH = h * 0.55;  // tall vertical posts (55% of height)
+  const archTop = y - postH; // where posts end and curve begins
 
   ctx.save();
   ctx.shadowColor = color;
@@ -1137,28 +1138,43 @@ function drawArch(x, y, scale, color) {
 
   // Left post
   ctx.fillStyle = color;
-  ctx.fillRect(x - w - postW, y - h * 0.65, postW, h * 0.65);
+  ctx.fillRect(x - w - postW, y - postH, postW, postH);
   // Right post
-  ctx.fillRect(x + w, y - h * 0.65, postW, h * 0.65);
+  ctx.fillRect(x + w, y - postH, postW, postH);
 
-  // Rounded arch top (semicircular arc connecting the two posts)
+  // Deep rounded ceiling (∩ shape) — semicircular arc from post tops
   ctx.beginPath();
-  ctx.moveTo(x - w - postW, y - h * 0.65);
-  // Draw the arc from left post top to right post top, curving up to the apex
-  ctx.quadraticCurveTo(x, y - h - postW * 2, x + w + postW, y - h * 0.65);
-  ctx.lineTo(x + w, y - h * 0.65);
-  ctx.quadraticCurveTo(x, y - h + postW, x - w, y - h * 0.65);
+  ctx.moveTo(x - w - postW, archTop);
+  ctx.bezierCurveTo(
+    x - w - postW, y - h,   // left control — pull up to full height
+    x + w + postW, y - h,   // right control — pull up to full height
+    x + w + postW, archTop   // end at right post top
+  );
+  ctx.lineTo(x + w, archTop);
+  ctx.bezierCurveTo(
+    x + w, y - h + postW * 1.5,
+    x - w, y - h + postW * 1.5,
+    x - w, archTop
+  );
   ctx.closePath();
   ctx.fill();
 
-  // Glow effect on arch
+  // Glow effect on arch ceiling
   ctx.globalAlpha = 0.3;
   ctx.fillStyle = '#fff';
   ctx.beginPath();
-  ctx.moveTo(x - w - postW, y - h * 0.65);
-  ctx.quadraticCurveTo(x, y - h - postW * 2, x + w + postW, y - h * 0.65);
-  ctx.lineTo(x + w, y - h * 0.65);
-  ctx.quadraticCurveTo(x, y - h + postW, x - w, y - h * 0.65);
+  ctx.moveTo(x - w - postW, archTop);
+  ctx.bezierCurveTo(
+    x - w - postW, y - h,
+    x + w + postW, y - h,
+    x + w + postW, archTop
+  );
+  ctx.lineTo(x + w, archTop);
+  ctx.bezierCurveTo(
+    x + w, y - h + postW * 1.5,
+    x - w, y - h + postW * 1.5,
+    x - w, archTop
+  );
   ctx.closePath();
   ctx.fill();
   ctx.globalAlpha = 1;
