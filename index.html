@@ -16,11 +16,21 @@ canvas{display:block;cursor:none}
 // CONSTANTS
 // ============================================================
 const W = 960, H = 640;
-const BPM = 160;
-const BEAT_S = 60 / BPM;
-const STEP_S = BEAT_S / 4;
-const SONG_BARS = 48;
-const SONG_DURATION = SONG_BARS * 4 * BEAT_S;
+
+// Song definitions — 3 songs at different BPMs
+const SONGS = [
+  { name: 'City Pop Groove', bpm: 130, bars: 48, color: '#44ccff', desc: 'BPM 130 — Easy' },
+  { name: 'Neon Rush',       bpm: 150, bars: 48, color: '#ffcc00', desc: 'BPM 150 — Normal' },
+  { name: 'Hyper Drive',     bpm: 180, bars: 48, color: '#ff4488', desc: 'BPM 180 — Hard' },
+];
+let selectedSong = 0;
+
+// These are recalculated when a song is selected
+let BPM = 150;
+let BEAT_S = 60 / BPM;
+let STEP_S = BEAT_S / 4;
+let SONG_BARS = 48;
+let SONG_DURATION = SONG_BARS * 4 * BEAT_S;
 
 // Perspective — lowered camera (higher VY) so road looks more head-on
 const VX = W / 2;           // vanishing point X
@@ -117,11 +127,12 @@ let audioStarted = false;
 let gameStartTime = 0;
 
 function initAudio() {
-  if (audioCtx) return;
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  masterGain = audioCtx.createGain();
-  masterGain.gain.value = 0.40;
-  masterGain.connect(audioCtx.destination);
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = 0.40;
+    masterGain.connect(audioCtx.destination);
+  }
   nextStepTime = audioCtx.currentTime + 0.1;
   stepCount = 0; beatCount = 0; melodyPos = 0;
   audioStarted = true;
@@ -331,7 +342,8 @@ function generateChart() {
 // ============================================================
 // GAME STATE
 // ============================================================
-let gameState = 'START';
+let gameState = 'SONG_SELECT';
+let songSelectIndex = 0;
 let obstacles = [];
 let score = 0, combo = 0, maxCombo = 0;
 let judgeCounts = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
@@ -429,7 +441,15 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
   }
 
-  if (gameState === 'START' && e.code === 'Space') {
+  if (gameState === 'SONG_SELECT') {
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowUp') {
+      songSelectIndex = (songSelectIndex + SONGS.length - 1) % SONGS.length;
+    } else if (e.code === 'ArrowRight' || e.code === 'ArrowDown') {
+      songSelectIndex = (songSelectIndex + 1) % SONGS.length;
+    } else if (e.code === 'Space' || e.code === 'Enter') {
+      selectSong(songSelectIndex);
+    }
+  } else if (gameState === 'START' && e.code === 'Space') {
     startGame();
   } else if (gameState === 'RESULT' && (e.code === 'KeyR' || e.code === 'Space')) {
     resetToStart();
@@ -764,7 +784,7 @@ function drawTrack() {
 }
 
 function drawSideBarriers() {
-  const NUM_POSTS = 12;
+  const NUM_POSTS = 3;
   ctx.save();
   for (let side = -1; side <= 1; side += 2) {
     for (let i = 0; i < NUM_POSTS; i++) {
@@ -942,22 +962,6 @@ function drawPylon(x, y, scale, color, isLeft) {
   ctx.fillRect(x - w * 0.65, y - h * 0.65, w * 1.3, stripeH);
   ctx.globalAlpha = 1;
 
-  // Arrow badge (colored circle with arrow)
-  const badgeR = Math.max(12, 20 * scale);
-  const badgeY = y - h - badgeR - 4 * scale;
-  ctx.fillStyle = color;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 10;
-  ctx.beginPath();
-  ctx.arc(x, badgeY, badgeR, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#fff';
-  ctx.font = `bold ${Math.max(14, Math.round(22 * scale))}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(isLeft ? '→' : '←', x, badgeY);
-
   ctx.restore();
 }
 
@@ -984,22 +988,6 @@ function drawArch(x, y, scale, color) {
   ctx.fillStyle = '#fff';
   ctx.fillRect(x - w - postW, y - h - postW, w * 2 + postW * 2, postW * 0.5);
   ctx.globalAlpha = 1;
-
-  // Arrow badge
-  const badgeR = Math.max(12, 20 * scale);
-  const badgeY = y - h - postW - badgeR - 4 * scale;
-  ctx.fillStyle = color;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 10;
-  ctx.beginPath();
-  ctx.arc(x, badgeY, badgeR, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#fff';
-  ctx.font = `bold ${Math.max(14, Math.round(22 * scale))}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('↓', x, badgeY);
 
   ctx.restore();
 }
@@ -1029,22 +1017,6 @@ function drawBlock(x, y, scale, color) {
   ctx.lineWidth = 1;
   ctx.strokeRect(x - w, y - h, w * 2, h);
   ctx.globalAlpha = 1;
-
-  // Arrow badge
-  const badgeR = Math.max(12, 20 * scale);
-  const badgeY = y - h - badgeR - 4 * scale;
-  ctx.fillStyle = color;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 10;
-  ctx.beginPath();
-  ctx.arc(x, badgeY, badgeR, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#fff';
-  ctx.font = `bold ${Math.max(14, Math.round(22 * scale))}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('↑', x, badgeY);
 
   ctx.restore();
 }
@@ -1083,22 +1055,6 @@ function drawStar(x, y, scale, color, isLeft) {
   ctx.arc(x, y - r * 0.5, ir * 0.6, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalAlpha = 1;
-
-  // Arrow badge
-  const badgeR = Math.max(12, 20 * scale);
-  const badgeY = y - r * 1.4 - badgeR;
-  ctx.fillStyle = color;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 10;
-  ctx.beginPath();
-  ctx.arc(x, badgeY, badgeR, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#fff';
-  ctx.font = `bold ${Math.max(14, Math.round(22 * scale))}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(isLeft ? '←' : '→', x, badgeY);
 
   ctx.restore();
 }
@@ -1143,10 +1099,10 @@ function drawCharacter() {
   ctx.ellipse(0, 2 + bounce, 20, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // --- Cute Chibi Character (back view) ---
+  // --- Cute Chibi Character (front-facing) ---
 
-  // Legs (short stubby)
-  ctx.fillStyle = '#ffd1dc';
+  // Legs (short stubby, skin-colored)
+  ctx.fillStyle = '#ffe5d0';
   ctx.beginPath();
   ctx.ellipse(-6 - legSwing * 0.3, -3, 5, 7, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1154,8 +1110,8 @@ function drawCharacter() {
   ctx.ellipse(6 + legSwing * 0.3, -3, 5, 7, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Shoes (small, pink)
-  ctx.fillStyle = '#ff6699';
+  // Shoes (red boots)
+  ctx.fillStyle = '#dd3355';
   ctx.beginPath();
   ctx.ellipse(-6 - legSwing * 0.3, 3, 5, 3, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1163,17 +1119,23 @@ function drawCharacter() {
   ctx.ellipse(6 + legSwing * 0.3, 3, 5, 3, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Body (round, small — pastel dress)
+  // Body (round, small — white blouse with red ribbon)
   const bodyGrad = ctx.createLinearGradient(0, -22, 0, -6);
-  bodyGrad.addColorStop(0, '#ffb7d5');
-  bodyGrad.addColorStop(1, '#ff8ec4');
+  bodyGrad.addColorStop(0, '#ffffff');
+  bodyGrad.addColorStop(1, '#f0e8f0');
   ctx.fillStyle = bodyGrad;
   ctx.beginPath();
   ctx.ellipse(0, -14, 12, 10, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Little white collar / bow accent
-  ctx.fillStyle = '#fff';
+  // Red skirt bottom
+  ctx.fillStyle = '#dd3355';
+  ctx.beginPath();
+  ctx.ellipse(0, -7, 14, 5, 0, 0, Math.PI);
+  ctx.fill();
+
+  // Red ribbon / bow at collar
+  ctx.fillStyle = '#ff3366';
   ctx.beginPath();
   ctx.ellipse(-5, -22, 4, 2.5, -0.3, 0, Math.PI * 2);
   ctx.fill();
@@ -1181,14 +1143,14 @@ function drawCharacter() {
   ctx.ellipse(5, -22, 4, 2.5, 0.3, 0, Math.PI * 2);
   ctx.fill();
   // Bow center
-  ctx.fillStyle = '#ff4488';
+  ctx.fillStyle = '#cc1144';
   ctx.beginPath();
-  ctx.arc(0, -22, 2, 0, Math.PI * 2);
+  ctx.arc(0, -22, 2.5, 0, Math.PI * 2);
   ctx.fill();
 
-  // Arms (stubby)
+  // Arms (white sleeves)
   const armSwing = isRunning ? Math.sin(phase + Math.PI) * 8 : 0;
-  ctx.fillStyle = '#ffd1dc';
+  ctx.fillStyle = '#f0e8f0';
   ctx.beginPath();
   ctx.ellipse(-14 - armSwing * 0.2, -16, 4, 6, 0.3, 0, Math.PI * 2);
   ctx.fill();
@@ -1209,8 +1171,8 @@ function drawCharacter() {
   const headR = 18;
   const headY = -38;
 
-  // Hair base (pink-lavender, covers back of head)
-  ctx.fillStyle = '#c88aff';
+  // Hair base (cherry-pink, covers back of head)
+  ctx.fillStyle = '#ff5588';
   ctx.beginPath();
   ctx.arc(0, headY, headR + 2, 0, Math.PI * 2);
   ctx.fill();
@@ -1222,7 +1184,7 @@ function drawCharacter() {
   ctx.fill();
 
   // Cat ears
-  ctx.fillStyle = '#c88aff';
+  ctx.fillStyle = '#ff5588';
   // Left ear
   ctx.beginPath();
   ctx.moveTo(-12, headY - 14);
@@ -1263,8 +1225,8 @@ function drawCharacter() {
   ctx.ellipse(7, headY + 1, 6, 7, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Iris (big, violet)
-  ctx.fillStyle = '#8844cc';
+  // Iris (big, ruby-red)
+  ctx.fillStyle = '#cc2255';
   ctx.beginPath();
   ctx.ellipse(-7, headY + 2, 4.5, 5.5, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1272,8 +1234,8 @@ function drawCharacter() {
   ctx.ellipse(7, headY + 2, 4.5, 5.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Pupil (dark)
-  ctx.fillStyle = '#220033';
+  // Pupil (dark red)
+  ctx.fillStyle = '#330011';
   ctx.beginPath();
   ctx.ellipse(-7, headY + 3, 2.5, 3.5, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1321,7 +1283,7 @@ function drawCharacter() {
   ctx.stroke();
 
   // Hair bangs (front fringe over forehead)
-  ctx.fillStyle = '#c88aff';
+  ctx.fillStyle = '#ff5588';
   ctx.beginPath();
   ctx.moveTo(-headR - 1, headY - 6);
   ctx.quadraticCurveTo(-headR + 2, headY - headR - 4, -6, headY - headR + 2);
@@ -1350,7 +1312,7 @@ function drawCharacter() {
   ctx.fill();
 
   // Tail (cute curly tail behind body)
-  ctx.strokeStyle = '#c88aff';
+  ctx.strokeStyle = '#ff5588';
   ctx.lineWidth = 3;
   ctx.lineCap = 'round';
   ctx.beginPath();
@@ -1440,7 +1402,7 @@ function drawHUD() {
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(100,200,255,0.4)';
   ctx.font = '11px sans-serif';
-  ctx.fillText('BPM ' + BPM, 18, H - 16);
+  ctx.fillText('BPM ' + BPM + ' — ' + SONGS[selectedSong].name, 18, H - 16);
 
   // ---- Progress bar ----
   const now = musicTime();
@@ -1769,6 +1731,18 @@ function drawResultScreen() {
   ctx.fillStyle = '#fff';
   ctx.fillText('ACCURACY: ' + accuracy.toFixed(2) + '%', VX, 365);
 
+  // ALL COMBO display when no misses
+  if (judgeCounts.MISS === 0 && obstacles.length > 0) {
+    const acPulse = 0.7 + 0.3 * Math.sin(t * 5);
+    ctx.save();
+    ctx.shadowColor = '#ff44ff';
+    ctx.shadowBlur = 30 * acPulse;
+    ctx.fillStyle = `rgba(255,100,255,${acPulse})`;
+    ctx.font = "bold 44px 'Impact', sans-serif";
+    ctx.fillText('✨ ALL COMBO ✨', VX, 270);
+    ctx.restore();
+  }
+
   // Judgment breakdown
   const resultStats = [
     ['PERFECT', judgeCounts.PERFECT, JUDGE_COLORS.PERFECT],
@@ -1806,11 +1780,131 @@ function drawResultScreen() {
 }
 
 // ============================================================
+// RENDERING: Song Select Screen
+// ============================================================
+function drawSongSelectScreen() {
+  const t = performance.now() / 1000;
+  const pulse = 0.7 + 0.3 * Math.sin(t * 3);
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Title
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur = 30 * pulse;
+  ctx.font = "bold 80px 'Impact', sans-serif";
+  ctx.fillStyle = `rgba(0,255,200,${pulse})`;
+  ctx.fillText('RRBe', VX, 80);
+
+  ctx.shadowColor = '#8844ff';
+  ctx.shadowBlur = 15;
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillStyle = '#cc88ff';
+  ctx.fillText('RACE & RHYTHM BEAT', VX, 130);
+
+  // Select label
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.fillText('SELECT SONG', VX, 200);
+
+  // Song cards
+  for (let i = 0; i < SONGS.length; i++) {
+    const song = SONGS[i];
+    const isSelected = i === songSelectIndex;
+    const cardX = VX - 180 + i * 180;
+    const cardY = 300;
+    const cardW = 150;
+    const cardH = 180;
+
+    // Card background
+    ctx.save();
+    if (isSelected) {
+      const sp = 0.6 + 0.4 * Math.sin(t * 4);
+      ctx.shadowColor = song.color;
+      ctx.shadowBlur = 20 * sp;
+      ctx.strokeStyle = song.color;
+      ctx.lineWidth = 3;
+      ctx.fillStyle = 'rgba(20,20,60,0.9)';
+    } else {
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(100,100,150,0.5)';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = 'rgba(10,10,30,0.7)';
+    }
+
+    ctx.beginPath();
+    ctx.roundRect(cardX - cardW / 2, cardY - cardH / 2, cardW, cardH, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    // BPM number (big)
+    ctx.save();
+    ctx.fillStyle = isSelected ? song.color : 'rgba(150,150,200,0.6)';
+    ctx.font = "bold 48px 'Impact', sans-serif";
+    ctx.shadowColor = isSelected ? song.color : 'transparent';
+    ctx.shadowBlur = isSelected ? 10 : 0;
+    ctx.fillText(String(song.bpm), cardX, cardY - 30);
+    ctx.restore();
+
+    // BPM label
+    ctx.fillStyle = isSelected ? '#fff' : 'rgba(150,150,200,0.5)';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('BPM', cardX, cardY + 10);
+
+    // Song name
+    ctx.fillStyle = isSelected ? '#fff' : 'rgba(150,150,200,0.5)';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(song.name, cardX, cardY + 40);
+
+    // Difficulty description
+    ctx.fillStyle = isSelected ? song.color : 'rgba(150,150,200,0.4)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(song.desc, cardX, cardY + 60);
+  }
+
+  // Navigation hint
+  ctx.fillStyle = 'rgba(150,220,255,0.6)';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('← → to select, SPACE to confirm', VX, 440);
+
+  // Controls reminder
+  ctx.shadowBlur = 0;
+  ctx.font = '13px sans-serif';
+  ctx.fillStyle = 'rgba(150,220,255,0.65)';
+  const lines = [
+    '🚧 Pylon RIGHT → press ← LEFT    🚧 Pylon LEFT → press → RIGHT',
+    '🌉 Arch → press ↓ DOWN            🧱 Block → press ↑ UP',
+    '⭐ Star RIGHT → press → RIGHT     ⭐ Star LEFT → press ← LEFT',
+  ];
+  lines.forEach(function(l, idx) { ctx.fillText(l, VX, 490 + idx * 22); });
+
+  // Press space
+  const sp = 0.5 + 0.5 * Math.sin(t * 4);
+  ctx.shadowColor = '#ffee00';
+  ctx.shadowBlur = 12 * sp;
+  ctx.fillStyle = `rgba(255,238,0,${sp})`;
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText('PRESS SPACE TO START', VX, H - 50);
+
+  ctx.restore();
+}
+
+// ============================================================
 // MAIN DRAW
 // ============================================================
 function draw() {
   ctx.clearRect(0, 0, W, H);
   drawBg();
+
+  if (gameState === 'SONG_SELECT') {
+    drawTrack();
+    drawCharacter();
+    drawSongSelectScreen();
+    return;
+  }
 
   if (gameState === 'START') {
     drawTrack();
@@ -1865,6 +1959,17 @@ function resetGame() {
   }
 }
 
+function selectSong(idx) {
+  selectedSong = idx;
+  const song = SONGS[idx];
+  BPM = song.bpm;
+  BEAT_S = 60 / BPM;
+  STEP_S = BEAT_S / 4;
+  SONG_BARS = song.bars;
+  SONG_DURATION = SONG_BARS * 4 * BEAT_S;
+  gameState = 'START';
+}
+
 function startGame() {
   initAudio();
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
@@ -1872,7 +1977,7 @@ function startGame() {
 }
 
 function resetToStart() {
-  gameState = 'START';
+  gameState = 'SONG_SELECT';
 }
 
 // ============================================================
