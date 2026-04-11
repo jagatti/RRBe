@@ -375,12 +375,12 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       else if (r < 0.90) typeIdx = 1;  // PYLON_L
       else typeIdx = r < 0.95 ? 2 : 3; // ARCH or BLOCK
     } else {
-      // Intense sections: action obstacles, very few stars (~5%)
-      if (r < 0.22) typeIdx = 0;       // PYLON_R
-      else if (r < 0.44) typeIdx = 1;  // PYLON_L
-      else if (r < 0.62) typeIdx = 2;  // ARCH
-      else if (r < 0.80) typeIdx = 3;  // BLOCK
-      else if (r < 0.90) typeIdx = 4;  // STAR_R (rare)
+      // Intense sections: action obstacles, stars ~5%
+      if (r < 0.24) typeIdx = 0;       // PYLON_R
+      else if (r < 0.48) typeIdx = 1;  // PYLON_L
+      else if (r < 0.72) typeIdx = 2;  // ARCH
+      else if (r < 0.95) typeIdx = 3;  // BLOCK
+      else if (r < 0.975) typeIdx = 4; // STAR_R (rare)
       else typeIdx = 5;                // STAR_L (rare)
     }
 
@@ -764,7 +764,7 @@ function generateChart() {
     if (progress < 0.15) structural = 0.2;       // intro — calm
     else if (progress < 0.30) structural = 0.5;   // build-up
     else if (progress < 0.55) structural = 1.0;   // chorus/peak — intense
-    else if (progress < 0.65) structural = 0.4;   // breakdown — calm
+    else if (progress < 0.65) structural = 0.3;   // breakdown — calm
     else if (progress < 0.85) structural = 1.0;   // second chorus — intense
     else structural = 0.3;                         // outro — calm
     // Rest bars (bar % 8 === 0) are explicitly calm
@@ -805,11 +805,11 @@ function generateChart() {
       else return 1;               // PYLON_L
     } else if (isHihat) {
       // Hihat/offbeat: dodge variety — rare stars (~5%)
-      if (r < 0.25) return 0;      // PYLON_R
-      else if (r < 0.50) return 1; // PYLON_L
-      else if (r < 0.70) return 2; // ARCH
-      else if (r < 0.85) return 3; // BLOCK
-      else if (r < 0.925) return 4; // STAR_R (rare)
+      if (r < 0.27) return 0;      // PYLON_R
+      else if (r < 0.54) return 1; // PYLON_L
+      else if (r < 0.74) return 2; // ARCH
+      else if (r < 0.95) return 3; // BLOCK
+      else if (r < 0.975) return 4; // STAR_R (rare)
       else return 5;               // STAR_L (rare)
     }
     // Default: no stars in intense sections
