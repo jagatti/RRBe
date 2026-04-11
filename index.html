@@ -351,6 +351,22 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     return beatDensity[idx].count < medianDensity * 0.7;
   }
 
+  // Detect silent sections: windows with zero or near-zero beats
+  function isSilentAt(t) {
+    const idx = Math.floor(t / windowSize);
+    if (idx >= beatDensity.length) return true;
+    return beatDensity[idx].count <= 1; // 0 or 1 beat in a 2-bar window = effectively silent
+  }
+
+  // Determine song section based on position (intro, calm, before-last-chorus, outro)
+  function getSectionAt(t) {
+    const progress = t / duration;
+    if (progress < 0.10) return 'intro';
+    if (progress >= 0.90) return 'outro';
+    if (progress >= 0.75 && progress < 0.80) return 'before_last_chorus';
+    return isCalmAt(t) ? 'calm' : 'intense';
+  }
+
   // Skip first 1.5s (intro), stop 2s before end
   const startT = 1.5;
   const endT = duration - 2.0;
@@ -363,17 +379,23 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     if (t < startT || t > endT) continue;
     if (t - lastTime < minGap) continue;
 
+    // Skip silent sections — no obstacles in silent parts
+    if (isSilentAt(t)) continue;
+
     const r = rand();
-    const calm = isCalmAt(t);
+    const section = getSectionAt(t);
     let typeIdx;
 
-    if (calm) {
-      // Calm sections: stars ~60%
-      if (r < 0.30) typeIdx = 4;       // STAR_R
-      else if (r < 0.60) typeIdx = 5;  // STAR_L
-      else if (r < 0.75) typeIdx = 0;  // PYLON_R
-      else if (r < 0.90) typeIdx = 1;  // PYLON_L
-      else typeIdx = r < 0.95 ? 2 : 3; // ARCH or BLOCK
+    if (section === 'intro' || section === 'outro' || section === 'calm' || section === 'before_last_chorus') {
+      // Calm/intro/outro: stars more frequent
+      const starChance = (section === 'before_last_chorus') ? 0.50
+                       : (section === 'intro' || section === 'outro') ? 0.45
+                       : 0.40;
+      if (r < starChance / 2) typeIdx = 4;       // STAR_R
+      else if (r < starChance) typeIdx = 5;       // STAR_L
+      else if (r < starChance + 0.20) typeIdx = 0; // PYLON_R
+      else if (r < starChance + 0.40) typeIdx = 1; // PYLON_L
+      else typeIdx = r < starChance + 0.55 ? 2 : 3; // ARCH or BLOCK
     } else {
       // Intense sections: action obstacles, stars ~5%
       if (r < 0.24) typeIdx = 0;       // PYLON_R
@@ -409,7 +431,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       // If gap is large enough, add midpoint obstacles
       if (gap > sixteenthS * 2.5) {
         const midT = obstacles[i].time + gap * 0.5;
-        if (midT > startT && midT < endT) {
+        if (midT > startT && midT < endT && !isSilentAt(midT)) {
           let typeIdx = Math.floor(rand() * 4); // only action types (0-3), no stars
           if (OBS_TYPES[typeIdx] === obstacles[i].type) typeIdx = (typeIdx + 1) % 4;
           extraObs.push({
@@ -737,6 +759,7 @@ function generateChart() {
   const kickArr = [...sd.kick].sort((a,b) => a - b);
   const snareArr = [...sd.snare].sort((a,b) => a - b);
   const hihatArr = [...sd.ohihat].sort((a,b) => a - b);
+  const synthArr = [...sd.synthSteps].sort((a,b) => a - b);
 
   // Easy: strong kicks only (beats 1 & 3, or first two distinct kicks)
   const easySteps   = kickArr.length >= 4 ? [kickArr[0], kickArr[2]] : [kickArr[0], kickArr[Math.min(1, kickArr.length-1)]];
@@ -753,66 +776,121 @@ function generateChart() {
   const expert16thB = [0, 1, 4, 6, 7, 8, 10, 12, 13, 14, 15]; // dense 16th runs
   const expert16thC = [0, 2, 4, 5, 6, 8, 10, 12, 13, 14];    // syncopated 16ths
 
-  // Determine musical intensity per bar based on drum density
-  // More active drums = higher intensity (chorus/climax), fewer = calm section
-  function barIntensity(bar) {
-    // Count how many distinct drum events per bar from song data
-    const totalDrums = sd.kick.size + sd.snare.size + sd.ohihat.size;
-    // Structural intensity: intro/outro are calm, middle sections are intense
-    const progress = bar / SONG_BARS; // 0→1
-    let structural;
-    if (progress < 0.15) structural = 0.2;       // intro — calm
-    else if (progress < 0.30) structural = 0.5;   // build-up
-    else if (progress < 0.55) structural = 1.0;   // chorus/peak — intense
-    else if (progress < 0.65) structural = 0.3;   // breakdown — calm
-    else if (progress < 0.85) structural = 1.0;   // second chorus — intense
-    else structural = 0.3;                         // outro — calm
-    // Rest bars (bar % 8 === 0) are explicitly calm
-    if (bar > 4 && bar % 8 === 0 && bar < SONG_BARS - 4) structural = 0.15;
-    // Drum density factor: songs with fewer drums are inherently calmer
-    const densityFactor = Math.min(totalDrums / 16, 1.0); // max 16 steps
-    return structural * (0.5 + 0.5 * densityFactor);
+  // Precompute which bars have audible melody (not all -1 entries)
+  // Track melody position per bar to determine if a bar has silence
+  function barHasMelody(bar) {
+    // Count melody notes that play in this bar
+    // Each bar = 16 steps, synth plays on synthSteps, melody advances per synthStep
+    let melPos = 0;
+    // Count total synth steps before this bar
+    for (let b = 0; b < bar; b++) {
+      for (const step of synthArr) {
+        melPos++;
+      }
+    }
+    // Check synth steps in this bar
+    let hasNote = false;
+    for (const step of synthArr) {
+      const ni = sd.melody[melPos % sd.melody.length];
+      if (ni >= 0) hasNote = true;
+      melPos++;
+    }
+    return hasNote;
   }
 
-  // Type selection weighted by musical position and intensity
-  // calm=true → favor stars; calm=false → favor action obstacles
-  function pickType(step, r, isCalm) {
+  function barHasDrums(bar) {
+    // All bars have the same drum pattern repeated, so check if any drums exist
+    return sd.kick.size > 0 || sd.snare.size > 0;
+  }
+
+  // Check if a bar is silent (no melody notes and effectively silent drums)
+  function barIsSilent(bar) {
+    // First 2 bars are intro — silent
+    if (bar < 2) return true;
+    // Last 2 bars — silent (outro)
+    if (bar >= SONG_BARS - 2) return true;
+    // Check melody: if all melody notes in this bar are -1 (rest), it's melodically silent
+    if (!barHasMelody(bar) && !barHasDrums(bar)) return true;
+    return false;
+  }
+
+  // Determine musical section based on song structure
+  // Returns: 'intro', 'a_melo', 'b_melo', 'chorus', 'breakdown', 'last_chorus', 'outro'
+  function getSection(bar) {
+    const progress = bar / SONG_BARS;
+    if (progress < 0.10) return 'intro';        // ~first 10% = intro
+    if (progress < 0.25) return 'a_melo';        // ~10-25% = A melody (low density)
+    if (progress < 0.40) return 'b_melo';        // ~25-40% = B melody (medium density)
+    if (progress < 0.55) return 'chorus';        // ~40-55% = first chorus (high density)
+    if (progress < 0.65) return 'breakdown';     // ~55-65% = breakdown/interlude (calm)
+    if (progress < 0.80) return 'b_melo';        // ~65-80% = B melody reprise
+    if (progress < 0.92) return 'last_chorus';   // ~80-92% = last chorus (highest density)
+    return 'outro';                               // ~92-100% = outro
+  }
+
+  // Section density and star probability
+  function sectionConfig(section) {
+    switch (section) {
+      case 'intro':        return { density: 'easy',   starChance: 0.50, isCalm: true };
+      case 'a_melo':       return { density: 'easy',   starChance: 0.35, isCalm: true };
+      case 'b_melo':       return { density: 'normal', starChance: 0.15, isCalm: false };
+      case 'chorus':       return { density: 'hard',   starChance: 0.05, isCalm: false };
+      case 'breakdown':    return { density: 'easy',   starChance: 0.45, isCalm: true };
+      case 'last_chorus':  return { density: 'expert', starChance: 0.03, isCalm: false };
+      case 'outro':        return { density: 'easy',   starChance: 0.40, isCalm: true };
+      default:             return { density: 'normal', starChance: 0.10, isCalm: false };
+    }
+  }
+
+  // Before last chorus, add extra stars (ラスサビ前)
+  function isBeforeLastChorus(bar) {
+    const progress = bar / SONG_BARS;
+    return progress >= 0.75 && progress < 0.80; // 2-3 bars before last chorus
+  }
+
+  // Type selection: melody-driven (70%) vs drum-driven (30%)
+  // Melody: synth steps get placed. Drums: kick/snare/hihat steps get placed.
+  function pickType(step, r, isCalm, starChance) {
     const isKick = sd.kick.has(step);
     const isSnare = sd.snare.has(step);
     const isHihat = sd.ohihat.has(step);
+    const isSynth = sd.synthSteps.has(step);
 
-    if (isCalm) {
-      // Calm sections: stars ~60% here (but overall ~20% since calm bars are minority)
-      if (r < 0.30) return 4;      // STAR_R
-      else if (r < 0.60) return 5;  // STAR_L
-      else if (r < 0.75) return 0;  // PYLON_R
-      else if (r < 0.90) return 1;  // PYLON_L
-      else return r < 0.95 ? 2 : 3; // ARCH or BLOCK
+    // Star placement based on starChance
+    if (r < starChance) {
+      return r < starChance / 2 ? 4 : 5; // STAR_R or STAR_L
     }
 
-    // Intense sections: mostly action obstacles, very few stars
+    // Calm sections: more stars, gentler obstacles
+    if (isCalm) {
+      const rr = (r - starChance) / (1 - starChance); // renormalize
+      if (rr < 0.30) return 0;      // PYLON_R
+      else if (rr < 0.60) return 1; // PYLON_L
+      else if (rr < 0.80) return 2; // ARCH
+      else return 3;                 // BLOCK
+    }
+
+    // Intense sections: obstacle type based on drum vs melody feel
     if (isKick && !isSnare) {
-      // Kick beat: jump or dodge — no stars
+      // Kick: jump or side dodge
       if (r < 0.30) return 3;      // BLOCK (jump)
       else if (r < 0.55) return 0; // PYLON_R
       else if (r < 0.80) return 1; // PYLON_L
       else return 2;               // ARCH (duck)
     } else if (isSnare) {
-      // Snare hit: duck or jump — no stars
+      // Snare: duck or jump
       if (r < 0.35) return 2;      // ARCH (duck)
       else if (r < 0.60) return 3; // BLOCK (jump)
       else if (r < 0.80) return 0; // PYLON_R
       else return 1;               // PYLON_L
-    } else if (isHihat) {
-      // Hihat/offbeat: dodge variety — rare stars (~5%)
-      if (r < 0.27) return 0;      // PYLON_R
-      else if (r < 0.54) return 1; // PYLON_L
-      else if (r < 0.74) return 2; // ARCH
-      else if (r < 0.95) return 3; // BLOCK
-      else if (r < 0.975) return 4; // STAR_R (rare)
-      else return 5;               // STAR_L (rare)
+    } else if (isSynth) {
+      // Melody-driven: variety
+      if (r < 0.25) return 0;
+      else if (r < 0.50) return 1;
+      else if (r < 0.75) return 2;
+      else return 3;
     }
-    // Default: no stars in intense sections
+    // Default: balanced
     if (r < 0.25) return 0;
     else if (r < 0.50) return 1;
     else if (r < 0.75) return 2;
@@ -823,14 +901,17 @@ function generateChart() {
   let lastType = -1;
 
   for (let bar = 0; bar < SONG_BARS; bar++) {
-    // Skip intro bars
-    if (bar < 2) continue;
+    // Skip silent bars (no melody or drums audible)
+    if (barIsSilent(bar)) continue;
 
-    // Determine intensity for this bar
-    const intensity = barIntensity(bar);
-    const isCalm = intensity < 0.4; // calm threshold
+    const section = getSection(bar);
+    const config = sectionConfig(section);
+    let starChance = config.starChance;
 
-    // Select pattern density based on song progression and intensity
+    // Boost stars before last chorus (ラスサビ前)
+    if (isBeforeLastChorus(bar)) starChance = 0.45;
+
+    // Select step pattern based on section density
     let steps;
     const isChaos = selectedSong === 3; // Chaos Protocol — 16th-note expert
     if (isChaos) {
@@ -842,31 +923,47 @@ function generateChart() {
       else if (bar < 40) steps = expert16thB;
       else               steps = expert16thC;
     } else {
-      // Use intensity to shift difficulty: intense bars → denser patterns
-      if (intensity >= 0.8) {
-        steps = expertSteps;   // chorus/peak → hardest
-      } else if (intensity >= 0.5) {
-        steps = hardSteps;     // moderate intensity
-      } else if (intensity >= 0.3) {
-        steps = normalSteps;   // calmer sections
-      } else {
-        steps = easySteps;     // quiet/rest sections
+      // Section-based density selection
+      switch (config.density) {
+        case 'easy':   steps = easySteps; break;
+        case 'normal': steps = normalSteps; break;
+        case 'hard':   steps = hardSteps; break;
+        case 'expert': steps = expertSteps; break;
+        default:       steps = normalSteps; break;
       }
     }
 
-    // Add musical variation: occasional rest bars for breathing room
-    if (bar > 4 && bar % 8 === 0 && bar < SONG_BARS - 4) {
-      // Rest bar — fewer notes for musical phrasing
+    // Add musical variation: occasional rest on every 8th bar for breathing room
+    if (bar > 4 && bar % 8 === 0 && bar < SONG_BARS - 4 && !isChaos) {
       steps = easySteps;
+      starChance = 0.40; // rest bars get more stars
     }
 
+    // Build combined step list: 70% melody steps, 30% drum steps
+    // For each step, determine if it's a melody step or drum step
     for (const step of steps) {
       const time = (bar * 16 + step) * st;
 
       // Skip if too close to song end
       if (time >= SONG_DURATION - bt * 2) continue;
 
-      let typeIdx = pickType(step, rand(), isCalm);
+      // Check if this step has audible content (melody or drums)
+      const isSynth = sd.synthSteps.has(step);
+      const isDrum = sd.kick.has(step) || sd.snare.has(step) || sd.ohihat.has(step);
+
+      // Skip steps that have no audible content at all
+      if (!isSynth && !isDrum) continue;
+
+      // 70% melody, 30% drum weighting: if it's a melody-only step, 70% chance to place
+      // If drum-only, 30% chance. If both, always place.
+      if (isSynth && !isDrum) {
+        if (rand() > 0.70) continue; // skip 30% of melody-only steps
+      } else if (isDrum && !isSynth) {
+        if (rand() > 0.30) continue; // skip 70% of drum-only steps
+      }
+      // Both melody+drum: always place
+
+      let typeIdx = pickType(step, rand(), config.isCalm, starChance);
 
       // Avoid 3+ consecutive same types
       if (typeIdx === lastType) {
@@ -923,7 +1020,7 @@ let keyFlash = { ArrowLeft: 0, ArrowRight: 0, ArrowDown: 0, ArrowUp: 0 };
 // Rhythm ball flash state (for hit feedback)
 let rhythmBallFlashes = [];  // { time, judgment, timer }
 const RHYTHM_BALL_RADIUS = 15;
-const RHYTHM_BALL_TRAVEL = 0.75; // time window (seconds) for ball visibility and travel to center
+const RHYTHM_BALL_TRAVEL = 0.60; // time window (seconds) for ball visibility and travel to center — faster flow
 
 // ============================================================
 // PERSPECTIVE MATH
@@ -1524,9 +1621,11 @@ function drawRhythmBalls() {
     // Alpha: fade in quickly, full near target
     const alpha = Math.min(1, progress * 2.5);
 
-    // Color transitions: orange → white as balls approach PERFECT zone (center)
-    // PERFECT window = T_PERFECT (0.055s), start blending at ~0.12s out
-    const perfectZone = Math.max(0, Math.min(1, (progress - 0.85) / 0.15)); // 0→1 in last 15%
+    // Color transitions: orange → white — balls turn white exactly when they touch at center (PERFECT)
+    // PERFECT zone = T_PERFECT / RHYTHM_BALL_TRAVEL of total travel, start blending well before
+    const perfectThreshold = 1.0 - T_PERFECT / RHYTHM_BALL_TRAVEL; // ~0.908
+    const blendStart = perfectThreshold - 0.15; // start blending ~0.15 before PERFECT zone
+    const perfectZone = Math.max(0, Math.min(1, (progress - blendStart) / (1.0 - blendStart)));
     const rr = Math.round(255);
     const gg = Math.round(136 + (255 - 136) * perfectZone);
     const bb = Math.round(51 + (255 - 51) * perfectZone);
@@ -2245,15 +2344,15 @@ function drawHUD() {
 
   // ---- Combo (top center, larger with pop animation) ----
   if (combo > 0) {
-    const comboSize = Math.min(72, 52 + combo * 0.2);
-    const popScale = 1 + comboPopTimer / 0.15 * 0.25; // 1.0→1.25 on hit, decays back
+    const comboSize = Math.min(85, 60 + combo * 0.25);
+    const popScale = 1 + comboPopTimer / 0.15 * 0.30; // 1.0→1.30 on hit, decays back
 
     ctx.save();
-    ctx.translate(VX, 52);
+    ctx.translate(VX, 56);
     ctx.scale(popScale, popScale);
 
     ctx.shadowColor = '#ffffff';
-    ctx.shadowBlur = 14;
+    ctx.shadowBlur = 16;
     ctx.fillStyle = '#ffffff';
     ctx.font = `bold ${comboSize}px 'Impact', sans-serif`;
     ctx.textAlign = 'center';
@@ -2261,9 +2360,9 @@ function drawHUD() {
     ctx.fillText(combo, 0, 0);
 
     ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255,255,200,0.8)';
-    ctx.font = 'bold 22px sans-serif';
-    ctx.fillText('COMBO', 0, comboSize / 2 + 14);
+    ctx.fillStyle = 'rgba(255,255,180,0.85)';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText('COMBO', 0, comboSize / 2 + 16);
 
     ctx.restore();
   }
@@ -2446,7 +2545,7 @@ function drawJudgePopup() {
   const scale = 1 + (1 - t) * 0.3;
   const alpha = Math.min(1, t * 2);
 
-  ctx.translate(VX, ROAD_BOTTOM - 120);
+  ctx.translate(120, H - 160);
   ctx.scale(scale, scale);
   ctx.globalAlpha = alpha;
 
