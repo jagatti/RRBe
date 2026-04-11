@@ -44,7 +44,7 @@ const PERSP_POW = 1.5;
 const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
 let scrollSpeedMult = 1.2; // user-adjustable: 0.5x (slow) – 2.0x (fast), default 1.2
 function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
-const CHART_START_OFFSET = 3.0; // seconds of song intro before obstacles begin (countdown period)
+const CHART_START_OFFSET = 0; // no offset: music and obstacles start together after GO
 
 // Obstacle visibility
 const OBS_VIS_CUTOFF = 0.10;  // z value below which obstacles are hidden (further = smaller number)
@@ -235,7 +235,7 @@ function startCustomAudio() {
   customSourceNode = audioCtx.createBufferSource();
   customSourceNode.buffer = customAudioBuffer;
   customSourceNode.connect(masterGain);
-  customSourceNode.start(gameStartTime >= 0 ? gameStartTime : audioCtx.currentTime + READY_GO_DUR);
+  customSourceNode.start(gameStartTime >= 0 ? gameStartTime : audioCtx.currentTime);
 }
 
 // ============================================================
@@ -519,7 +519,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     ampMedian = sorted[Math.floor(sorted.length * AMP_PERCENTILE)] || 0.3;
   }
 
-  // Skip first CHART_START_OFFSET seconds (intro plays during countdown), stop 2s before end
+  // Skip first CHART_START_OFFSET seconds, stop 2s before end
   const startT = CHART_START_OFFSET;
   const endT = duration - 2.0;
   let lastType = -1;
@@ -956,7 +956,7 @@ function sfxMiss(t) {
 
 // Audio scheduler
 function scheduleAudio() {
-  if (!audioCtx || (gameState !== 'PLAYING' && gameState !== 'READY_GO')) return;
+  if (!audioCtx || gameState !== 'PLAYING') return;
   // Skip synth scheduling for custom MP3 songs (audio plays from buffer)
   if (isCustomSong) {
     // Still track beats for visual beat flash
@@ -1538,10 +1538,17 @@ function updateAccuracy() {
 function update(deltaT) {
   if (gameState === 'READY_GO') {
     readyGoTimer -= deltaT;
-    roadScroll = (roadScroll + deltaT * 3.0) % 1.0;
+    // Don't scroll road or play music during READY_GO — just animate character idle
     charPhase += deltaT * 12;
     if (readyGoTimer <= 0) {
       gameState = 'PLAYING';
+      // Start music and game timing NOW when GO finishes
+      if (audioCtx) {
+        gameStartTime = audioCtx.currentTime;
+        nextStepTime = gameStartTime;
+        stepCount = 0; beatCount = 0; melodyPos = 0;
+      }
+      if (isCustomSong) startCustomAudio();
     }
     return;
   }
@@ -3283,12 +3290,11 @@ function resetGame() {
 
   if (audioCtx) {
     stepCount = 0; beatCount = 0; melodyPos = 0;
-    gameStartTime = audioCtx.currentTime; // song starts immediately (plays during READY_GO countdown)
-    nextStepTime = gameStartTime;
+    gameStartTime = -1; // will be set when READY_GO finishes
+    nextStepTime = 0;
   }
 
-  // Start MP3 playback for custom songs
-  if (isCustomSong) startCustomAudio();
+  // Custom audio will be started when READY_GO finishes (transition to PLAYING)
 }
 
 function selectSong(idx) {
