@@ -45,6 +45,11 @@ const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
 let scrollSpeedMult = 1.0; // user-adjustable: 0.5x(slow) – 3.0x(fast), default 1.0
 function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
 
+// Obstacle visibility
+const OBS_VIS_CUTOFF = 0.15;  // z value below which obstacles are hidden (further = smaller number)
+const OBS_SCALE_MIN  = 0.40;  // scale at cutoff (far)
+const OBS_SCALE_MAX  = 0.70;  // scale at z=1.0 (near)
+
 // Timing windows (seconds)
 const T_PERFECT = 0.055;
 const T_GREAT   = 0.105;
@@ -1543,13 +1548,13 @@ function drawObstacles() {
   visible.sort((a, b) => a.z - b.z);
 
   for (const { obs: o, z } of visible) {
-    if (z < 0.15) continue;
+    if (z < OBS_VIS_CUTOFF) continue;
 
     // Use road perspective mapping so obstacles move WITH the road surface
     const s = zToScreen(z);
     const y = s.y;
-    // Linear scale from z: small(0.40) → medium(0.70) — gentle size progression, visible from further back
-    const scale = 0.40 + (Math.min(1.0, z) - 0.15) / 0.85 * 0.30;
+    // Linear scale: gentle size progression from far to near
+    const scale = OBS_SCALE_MIN + (Math.min(1.0, z) - OBS_VIS_CUTOFF) / (1.0 - OBS_VIS_CUTOFF) * (OBS_SCALE_MAX - OBS_SCALE_MIN);
 
     // Alpha: fade in gradually from far, dim if missed
     let alpha = Math.min(1, s.t * 2.5);
