@@ -131,7 +131,7 @@ from 3 songs at different BPMs before starting.
 
 - **Single file**: Everything runs from `index.html` — HTML, CSS, and
   JavaScript inline
-- **HTML5 Canvas** (960×640): Pseudo-3D perspective road with vanishing-point
+- **HTML5 Canvas** (1024×768): Pseudo-3D perspective road with vanishing-point
   projection
 - **Web Audio API**: Fully procedural drum machine + synth engine
 - **Vanilla JS**: Zero external libraries or CDN dependencies
