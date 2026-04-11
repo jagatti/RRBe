@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 <head>
 <meta charset="UTF-8">
 <title>RRBe – Race &amp; Rhythm Beat</title>
@@ -15,14 +15,14 @@ canvas{display:block;cursor:none}
 // ============================================================
 // CONSTANTS
 // ============================================================
-const W = 960, H = 640;
+const W = 1024, H = 768;
 
 // Song definitions — 4 songs at different BPMs
 const SONGS = [
-  { name: 'City Pop Groove', bpm: 130, bars: 48, color: '#44ccff', desc: 'BPM 130 — Mellow & Groovy' },
-  { name: 'Neon Rush',       bpm: 150, bars: 48, color: '#ffcc00', desc: 'BPM 150 — Synth Drive' },
-  { name: 'Hyper Drive',     bpm: 180, bars: 48, color: '#ff4488', desc: 'BPM 180 — Intense' },
-  { name: 'Chaos Protocol',  bpm: 170, bars: 56, color: '#cc44ff', desc: 'BPM 170 — 16th Expert' },
+  { name: 'City Pop Groove', bpm: 130, bars: 48, color: '#44ccff', desc: 'BPM 130 — メロウ＆グルービー' },
+  { name: 'Neon Rush',       bpm: 150, bars: 48, color: '#ffcc00', desc: 'BPM 150 — シンセドライブ' },
+  { name: 'Hyper Drive',     bpm: 180, bars: 48, color: '#ff4488', desc: 'BPM 180 — インテンス' },
+  { name: 'Chaos Protocol',  bpm: 170, bars: 56, color: '#cc44ff', desc: 'BPM 170 — 16分エキスパート' },
 ];
 let selectedSong = 0;
 
@@ -35,9 +35,9 @@ let SONG_DURATION = SONG_BARS * 4 * BEAT_S;
 
 // Perspective — lowered camera (higher VY) so road looks more head-on
 const VX = W / 2;           // vanishing point X
-const VY = 180;              // vanishing point Y (lowered camera)
-const ROAD_BOTTOM = 560;     // road bottom edge (near player)
-const ROAD_HW = 360;         // half-width of road at bottom
+const VY = 216;              // vanishing point Y (lowered camera)
+const ROAD_BOTTOM = 672;     // road bottom edge (near player)
+const ROAD_HW = 384;         // half-width of road at bottom
 const PERSP_POW = 1.5;
 
 // Obstacle scroll
@@ -395,16 +395,16 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
 // Handle MP3 file drop
 function handleMP3Drop(file) {
   if (!file || !file.type.startsWith('audio/')) {
-    mp3LoadingMsg = 'Not an audio file!';
+    mp3LoadingMsg = '音声ファイルではありません！';
     setTimeout(() => { mp3LoadingMsg = ''; }, 2000);
     return;
   }
-  mp3LoadingMsg = 'Loading: ' + file.name + '...';
+  mp3LoadingMsg = '読み込み中: ' + file.name + '...';
   initAudio();
 
   const reader = new FileReader();
   reader.onload = function(e) {
-    mp3LoadingMsg = 'Analyzing beats...';
+    mp3LoadingMsg = 'ビートを解析中...';
     audioCtx.decodeAudioData(e.target.result, function(buffer) {
       customAudioBuffer = buffer;
       const duration = buffer.duration;
@@ -433,7 +433,7 @@ function handleMP3Drop(file) {
         bpm: bpm,
         bars: bars,
         color: '#00ff88',
-        desc: 'BPM ' + bpm + ' — Custom MP3'
+        desc: 'BPM ' + bpm + ' — カスタムMP3'
       });
 
       // Add a dummy SONG_DATA entry (won't be used for synth)
@@ -441,10 +441,10 @@ function handleMP3Drop(file) {
 
       // Select the custom song
       songSelectIndex = SONGS.length - 1;
-      mp3LoadingMsg = '✓ ' + displayName + ' (BPM ' + bpm + ', ' + beats.length + ' beats)';
+      mp3LoadingMsg = '✓ ' + displayName + ' (BPM ' + bpm + ', ' + beats.length + ' ビート)';
       setTimeout(() => { mp3LoadingMsg = ''; }, 3000);
     }, function(err) {
-      mp3LoadingMsg = 'Failed to decode audio!';
+      mp3LoadingMsg = '音声のデコードに失敗しました！';
       setTimeout(() => { mp3LoadingMsg = ''; }, 2000);
     });
   };
@@ -454,11 +454,11 @@ function handleMP3Drop(file) {
 // Handle avatar image drop — analyze dominant colors and generate avatar palette
 function handleAvatarDrop(file) {
   if (!file || !file.type.startsWith('image/')) {
-    avatarLoadingMsg = 'Not an image file!';
+    avatarLoadingMsg = '画像ファイルではありません！';
     setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
     return;
   }
-  avatarLoadingMsg = 'Analyzing image...';
+  avatarLoadingMsg = '画像を解析中...';
 
   const reader = new FileReader();
   reader.onload = function(e) {
@@ -486,7 +486,7 @@ function handleAvatarDrop(file) {
       }
 
       if (colors.length < 10) {
-        avatarLoadingMsg = 'Image too simple — try a colorful image!';
+        avatarLoadingMsg = '色が少なすぎます — カラフルな画像を使ってください！';
         setTimeout(() => { avatarLoadingMsg = ''; }, 2500);
         return;
       }
@@ -529,11 +529,11 @@ function handleAvatarDrop(file) {
         ].map(Math.round)),
       };
 
-      avatarLoadingMsg = '✓ Avatar updated from image!';
+      avatarLoadingMsg = '✓ 画像からアバターを更新しました！';
       setTimeout(() => { avatarLoadingMsg = ''; }, 3000);
     };
     img.onerror = function() {
-      avatarLoadingMsg = 'Failed to load image!';
+      avatarLoadingMsg = '画像の読み込みに失敗しました！';
       setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
     };
     img.src = e.target.result;
@@ -932,7 +932,7 @@ window.addEventListener('keydown', (e) => {
     } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 2) {
       // Reset avatar
       avatarCustom = null;
-      avatarLoadingMsg = 'Avatar reset to default!';
+      avatarLoadingMsg = 'アバターを初期化しました！';
       setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
     } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 3) {
       // Back to song select
@@ -940,9 +940,7 @@ window.addEventListener('keydown', (e) => {
     } else if (e.code === 'Escape') {
       gameState = 'SONG_SELECT';
     }
-  }
-
-  if (gameState === 'SONG_SELECT') {
+  } else if (gameState === 'SONG_SELECT') {
     if (e.code === 'ArrowLeft' || e.code === 'ArrowUp') {
       songSelectIndex = (songSelectIndex + SONGS.length - 1) % SONGS.length;
     } else if (e.code === 'ArrowRight' || e.code === 'ArrowDown') {
@@ -2337,7 +2335,7 @@ function drawAccuracyGauge(cx, cy, r) {
 
   ctx.font = '9px sans-serif';
   ctx.fillStyle = 'rgba(180,200,255,0.6)';
-  ctx.fillText('ACCURACY', cx, cy + 15);
+  ctx.fillText('精度', cx, cy + 15);
 
   ctx.restore();
 }
@@ -2470,7 +2468,7 @@ function drawVolumeUI() {
   ctx.font = '12px sans-serif';
   ctx.fillStyle = 'rgba(180,220,255,0.6)';
   ctx.shadowBlur = 0;
-  ctx.fillText('VOLUME  [ − / + ]', volX, volY - 14);
+  ctx.fillText('音量  [ − / + ]', volX, volY - 14);
   // Background bar
   ctx.fillStyle = 'rgba(60,60,100,0.6)';
   ctx.fillRect(volX - barW / 2, volY - barH / 2, barW, barH);
@@ -2516,16 +2514,16 @@ function drawStartScreen() {
   ctx.font = '15px sans-serif';
   ctx.fillStyle = 'rgba(150,220,255,0.85)';
   const lines = [
-    'Obstacles rush toward you — dodge them to the beat!',
+    '障害物がリズムに合わせて迫ってくる — タイミングよく避けよう！',
     '',
-    '\uD83D\uDEA7 Pylon on RIGHT  \u2192  press \u2190 LEFT to dodge',
-    '\uD83D\uDEA7 Pylon on LEFT   \u2192  press \u2192 RIGHT to dodge',
-    '\uD83C\uDF09 Arch overhead   \u2192  press \u2193 DOWN to duck',
-    '\uD83E\uDDF1 Block on ground  \u2192  press \u2191 UP to jump',
-    '\u2B50 Star on RIGHT   \u2192  press \u2192 RIGHT to collect',
-    '\u2B50 Star on LEFT    \u2192  press \u2190 LEFT to collect',
+    '🚧 右のパイロン → ← を押して避ける',
+    '🚧 左のパイロン → → を押して避ける',
+    '🌉 アーチ（上） → ↓ を押してしゃがむ',
+    '🧱 ブロック（下） → ↑ を押してジャンプ',
+    '⭐ 右のスター → → を押して取る',
+    '⭐ 左のスター → ← を押して取る',
     '',
-    'Timing matters: PERFECT \u2192 GREAT \u2192 GOOD \u2192 BAD \u2192 MISS',
+    '判定: PERFECT → GREAT → GOOD → BAD → MISS',
   ];
   lines.forEach(function(l, i) { ctx.fillText(l, VX, H / 2 - 20 + i * 24); });
 
@@ -2554,7 +2552,7 @@ function drawStartScreen() {
   ctx.shadowBlur = 12 * sp;
   ctx.fillStyle = 'rgba(255,238,0,' + sp + ')';
   ctx.font = 'bold 20px sans-serif';
-  ctx.fillText('PRESS SPACE TO START', VX, H / 2 + 230);
+  ctx.fillText('スペースキーでスタート', VX, H / 2 + 230);
 
   ctx.restore();
   drawVolumeUI();
@@ -2588,7 +2586,7 @@ function drawResultScreen() {
   ctx.shadowBlur = 20 * pulse;
   ctx.fillStyle = 'rgba(0,255,200,' + pulse + ')';
   ctx.font = "bold 50px 'Impact', sans-serif";
-  ctx.fillText('STAGE CLEAR!', VX, 80);
+  ctx.fillText('ステージクリア！', VX, 80);
 
   ctx.shadowColor = gradeColors[grade];
   ctx.shadowBlur = 40;
@@ -2599,14 +2597,14 @@ function drawResultScreen() {
   ctx.shadowBlur = 0;
   ctx.font = 'bold 24px sans-serif';
   ctx.fillStyle = '#00ddff';
-  ctx.fillText('SCORE: ' + score, VX, 300);
+  ctx.fillText('スコア: ' + score, VX, 300);
 
   ctx.fillStyle = '#ffee44';
   ctx.font = '20px sans-serif';
-  ctx.fillText('MAX COMBO: ' + maxCombo, VX, 335);
+  ctx.fillText('最大コンボ: ' + maxCombo, VX, 335);
 
   ctx.fillStyle = '#fff';
-  ctx.fillText('ACCURACY: ' + accuracy.toFixed(2) + '%', VX, 365);
+  ctx.fillText('精度: ' + accuracy.toFixed(2) + '%', VX, 365);
 
   // ALL COMBO display when no misses
   if (judgeCounts.MISS === 0 && obstacles.length > 0) {
@@ -2616,7 +2614,7 @@ function drawResultScreen() {
     ctx.shadowBlur = 30 * acPulse;
     ctx.fillStyle = `rgba(255,100,255,${acPulse})`;
     ctx.font = "bold 44px 'Impact', sans-serif";
-    ctx.fillText('✨ ALL COMBO ✨', VX, 270);
+    ctx.fillText('✨ フルコンボ ✨', VX, 270);
     ctx.restore();
   }
 
@@ -2651,7 +2649,7 @@ function drawResultScreen() {
   ctx.shadowBlur = 10 * rp;
   ctx.fillStyle = 'rgba(255,238,0,' + rp + ')';
   ctx.font = 'bold 18px sans-serif';
-  ctx.fillText('PRESS R or SPACE TO RESTART', VX, H - 60);
+  ctx.fillText('R または スペースでリスタート', VX, H - 60);
 
   ctx.restore();
 }
@@ -2672,16 +2670,16 @@ function drawSettingsScreen() {
   ctx.shadowBlur = 20 * pulse;
   ctx.font = "bold 60px 'Impact', sans-serif";
   ctx.fillStyle = `rgba(0,255,200,${pulse})`;
-  ctx.fillText('SETTINGS', VX, 70);
+  ctx.fillText('設定', VX, 70);
 
   ctx.shadowBlur = 0;
 
   // --- Volume (item 0) ---
-  const volY = 160;
+  const volY = 190;
   const isVol = settingsSelection === 0;
   ctx.fillStyle = isVol ? '#00ffcc' : 'rgba(150,200,255,0.6)';
   ctx.font = isVol ? 'bold 22px sans-serif' : '20px sans-serif';
-  ctx.fillText('🔊 VOLUME', VX, volY);
+  ctx.fillText('🔊 音量', VX, volY);
 
   // Volume bar
   const barW = 200, barH = 12;
@@ -2699,15 +2697,15 @@ function drawSettingsScreen() {
   if (isVol) {
     ctx.fillStyle = 'rgba(0,255,200,0.5)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('← → to adjust', VX, volY + 68);
+    ctx.fillText('← → で調整', VX, volY + 68);
   }
 
   // --- Avatar Drop Zone (item 1) ---
-  const avatarY = 270;
+  const avatarY = 320;
   const isAvatar = settingsSelection === 1;
   ctx.fillStyle = isAvatar ? '#ff88cc' : 'rgba(200,150,255,0.6)';
   ctx.font = isAvatar ? 'bold 22px sans-serif' : '20px sans-serif';
-  ctx.fillText('🎨 AVATAR CHANGE', VX, avatarY);
+  ctx.fillText('🎨 アバター変更', VX, avatarY);
 
   // Drop zone
   const dropW = 300, dropH = 100;
@@ -2726,7 +2724,7 @@ function drawSettingsScreen() {
     ctx.setLineDash([]);
     ctx.fillStyle = '#ff88cc';
     ctx.font = 'bold 20px sans-serif';
-    ctx.fillText('🖼️ Drop Image Here!', VX, avatarY + 70);
+    ctx.fillText('🖼️ 画像をここにドロップ！', VX, avatarY + 70);
     ctx.restore();
   } else {
     ctx.strokeStyle = isAvatar ? '#ff88cc' : 'rgba(150,100,200,0.4)';
@@ -2739,10 +2737,10 @@ function drawSettingsScreen() {
 
     ctx.fillStyle = isAvatar ? 'rgba(255,200,230,0.8)' : 'rgba(180,150,220,0.5)';
     ctx.font = '14px sans-serif';
-    ctx.fillText('Drag & drop an image file here', VX, avatarY + 55);
+    ctx.fillText('画像ファイルをドラッグ＆ドロップ', VX, avatarY + 55);
     ctx.fillStyle = isAvatar ? 'rgba(255,180,220,0.6)' : 'rgba(150,130,200,0.4)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('Colors from the image will customize your avatar', VX, avatarY + 80);
+    ctx.fillText('画像の色がアバターに反映されます', VX, avatarY + 80);
   }
 
   // Current avatar status
@@ -2750,7 +2748,7 @@ function drawSettingsScreen() {
   if (avatarCustom) {
     ctx.fillStyle = '#ff88cc';
     ctx.font = '14px sans-serif';
-    ctx.fillText('✨ Custom avatar active!', VX, statusY);
+    ctx.fillText('✨ カスタムアバター適用中！', VX, statusY);
     // Show color swatches
     const swatchColors = [avatarCustom.hair, avatarCustom.shirt, avatarCustom.scarf, avatarCustom.eyes, avatarCustom.wings];
     swatchColors.forEach((c, i) => {
@@ -2763,7 +2761,7 @@ function drawSettingsScreen() {
   } else {
     ctx.fillStyle = 'rgba(150,200,255,0.5)';
     ctx.font = '14px sans-serif';
-    ctx.fillText('Default avatar', VX, statusY);
+    ctx.fillText('デフォルトアバター', VX, statusY);
   }
 
   // Avatar loading message
@@ -2774,7 +2772,7 @@ function drawSettingsScreen() {
   }
 
   // --- Reset Avatar (item 2) ---
-  const resetY = 480;
+  const resetY = 570;
   const isReset = settingsSelection === 2;
   if (isReset) {
     ctx.shadowColor = '#ff4444';
@@ -2782,16 +2780,16 @@ function drawSettingsScreen() {
   }
   ctx.fillStyle = isReset ? '#ff6644' : 'rgba(200,100,100,0.5)';
   ctx.font = isReset ? 'bold 20px sans-serif' : '18px sans-serif';
-  ctx.fillText('🔄 Reset Avatar to Default', VX, resetY);
+  ctx.fillText('🔄 アバターを初期化', VX, resetY);
   ctx.shadowBlur = 0;
   if (isReset) {
     ctx.fillStyle = 'rgba(255,100,80,0.5)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('Press SPACE to reset', VX, resetY + 22);
+    ctx.fillText('スペースで初期化', VX, resetY + 22);
   }
 
   // --- Back (item 3) ---
-  const backY = 540;
+  const backY = 650;
   const isBack = settingsSelection === 3;
   if (isBack) {
     ctx.shadowColor = '#ffee00';
@@ -2799,22 +2797,22 @@ function drawSettingsScreen() {
   }
   ctx.fillStyle = isBack ? '#ffee00' : 'rgba(200,200,100,0.5)';
   ctx.font = isBack ? 'bold 20px sans-serif' : '18px sans-serif';
-  ctx.fillText('← Back to Song Select', VX, backY);
+  ctx.fillText('← 曲選択に戻る', VX, backY);
   ctx.shadowBlur = 0;
   if (isBack) {
     ctx.fillStyle = 'rgba(255,238,0,0.5)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('Press SPACE or ESC', VX, backY + 22);
+    ctx.fillText('スペースまたはESC', VX, backY + 22);
   }
 
   // Navigation hint
   ctx.fillStyle = 'rgba(150,200,255,0.4)';
   ctx.font = '12px sans-serif';
-  ctx.fillText('↑ ↓ to navigate  |  SPACE to confirm  |  ESC to go back', VX, H - 20);
+  ctx.fillText('↑ ↓ で移動 ｜ スペースで決定 ｜ ESCで戻る', VX, H - 20);
 
   // Draw avatar preview on the right
   ctx.save();
-  ctx.translate(W - 120, 350);
+  ctx.translate(W - 120, 420);
   ctx.scale(0.6, 0.6);
   // Mini avatar preview (draw a simplified version)
   const av = avatarCustom || {
@@ -2854,7 +2852,7 @@ function drawSettingsScreen() {
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 16px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Preview', 0, 55);
+  ctx.fillText('プレビュー', 0, 55);
   ctx.restore();
 
   ctx.restore();
@@ -2888,7 +2886,7 @@ function drawSongSelectScreen() {
   ctx.shadowBlur = 0;
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 28px sans-serif';
-  ctx.fillText('SELECT SONG', VX, 200);
+  ctx.fillText('曲を選んでください', VX, 200);
 
   // Song cards
   for (let i = 0; i < SONGS.length; i++) {
@@ -2897,7 +2895,7 @@ function drawSongSelectScreen() {
     const cardSpacing = SONGS.length <= 3 ? 180 : 150;
     const totalW = (SONGS.length - 1) * cardSpacing;
     const cardX = VX - totalW / 2 + i * cardSpacing;
-    const cardY = 300;
+    const cardY = 340;
     const cardW = SONGS.length <= 3 ? 150 : 130;
     const cardH = 180;
 
@@ -2951,18 +2949,18 @@ function drawSongSelectScreen() {
   // Navigation hint
   ctx.fillStyle = 'rgba(150,220,255,0.6)';
   ctx.font = '14px sans-serif';
-  ctx.fillText('← → to select, SPACE to confirm', VX, 440);
+  ctx.fillText('← → で選択、スペースで決定', VX, 490);
 
   // Difficulty selector for custom songs
   if (songSelectIndex >= 4 && customAudioBuffer) {
-    const diffY = 462;
+    const diffY = 516;
     ctx.fillStyle = '#00ff88';
     ctx.font = 'bold 16px sans-serif';
-    const diffLabel = customDifficulty === 'HARD' ? '🔥 HARD (16th notes)' : '🎵 NORMAL';
-    ctx.fillText('Difficulty: ' + diffLabel, VX, diffY);
+    const diffLabel = customDifficulty === 'HARD' ? '🔥 ハード（16分音符）' : '🎵 ノーマル';
+    ctx.fillText('難易度: ' + diffLabel, VX, diffY);
     ctx.fillStyle = 'rgba(0,255,136,0.5)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('Press D to toggle difficulty', VX, diffY + 18);
+    ctx.fillText('Dキーで難易度変更', VX, diffY + 18);
   }
 
   // Controls reminder
@@ -2970,11 +2968,11 @@ function drawSongSelectScreen() {
   ctx.font = '13px sans-serif';
   ctx.fillStyle = 'rgba(150,220,255,0.65)';
   const lines = [
-    '🚧 Pylon RIGHT → press ← LEFT    🚧 Pylon LEFT → press → RIGHT',
-    '🌉 Arch → press ↓ DOWN            🧱 Block → press ↑ UP',
-    '⭐ Star RIGHT → press → RIGHT     ⭐ Star LEFT → press ← LEFT',
+    '🚧 右パイロン → ← を押す    🚧 左パイロン → → を押す',
+    '🌉 アーチ → ↓ を押す            🧱 ブロック → ↑ を押す',
+    '⭐ 右スター → → を押す     ⭐ 左スター → ← を押す',
   ];
-  lines.forEach(function(l, idx) { ctx.fillText(l, VX, 500 + idx * 20); });
+  lines.forEach(function(l, idx) { ctx.fillText(l, VX, 560 + idx * 22); });
 
    // Press space
   const sp = 0.5 + 0.5 * Math.sin(t * 4);
@@ -2982,13 +2980,13 @@ function drawSongSelectScreen() {
   ctx.shadowBlur = 12 * sp;
   ctx.fillStyle = `rgba(255,238,0,${sp})`;
   ctx.font = 'bold 18px sans-serif';
-  ctx.fillText('PRESS SPACE TO START', VX, H - 60);
+  ctx.fillText('スペースキーでスタート', VX, H - 60);
 
   // Settings link
   ctx.shadowBlur = 0;
   ctx.fillStyle = 'rgba(200,180,255,0.6)';
   ctx.font = '14px sans-serif';
-  ctx.fillText('⚙ Press S for Settings (Volume & Avatar)', VX, H - 38);
+  ctx.fillText('⚙ Sキーで設定（音量・アバター）', VX, H - 38);
 
   // MP3 drop zone indicator
   ctx.shadowBlur = 0;
@@ -3005,19 +3003,19 @@ function drawSongSelectScreen() {
     ctx.setLineDash([]);
     ctx.fillStyle = '#00ff88';
     ctx.font = 'bold 24px sans-serif';
-    ctx.fillText('🎵 Drop MP3 Here!', VX, 310);
+    ctx.fillText('🎵 MP3をここにドロップ！', VX, 310);
     ctx.restore();
   } else {
     ctx.fillStyle = 'rgba(0,255,136,0.4)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('🎵 Drag & drop an MP3 file to add a custom song', VX, 570);
+    ctx.fillText('🎵 MP3ファイルをドラッグ＆ドロップで追加', VX, 640);
   }
 
   // MP3 loading message
   if (mp3LoadingMsg) {
     ctx.fillStyle = '#00ff88';
     ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(mp3LoadingMsg, VX, 584);
+    ctx.fillText(mp3LoadingMsg, VX, 654);
   }
 
   ctx.restore();
