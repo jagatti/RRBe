@@ -195,8 +195,9 @@ let mp3DropZoneHover = false;   // drag hover visual feedback
 let mp3LoadingMsg = '';         // loading status text
 let customDifficulty = 'NORMAL'; // 'NORMAL' or 'HARD' for custom MP3 songs
 
-// Avatar customization state
-let avatarCustom = null;  // null = default, or {hair, shirt, scarf, eyes, skin, wings, boots}
+// Avatar customization state — Minecraft skin texture
+let avatarCustom = null;  // null = default, or { skinCanvas: OffscreenCanvas (64x64 Minecraft skin) }
+let skinTexture = null;   // HTMLCanvasElement holding the full 64x64 skin for drawing
 let avatarDropHover = false;
 let avatarLoadingMsg = '';
 
@@ -510,85 +511,139 @@ function handleMP3Drop(file) {
   reader.readAsArrayBuffer(file);
 }
 
-// Handle avatar image drop — analyze dominant colors and generate avatar palette
+// Build the default Minecraft skin canvas (64x64) procedurally
+function buildDefaultSkin() {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  const g = c.getContext('2d');
+  // Helper: fill a region with a solid color
+  function fill(x,y,w,h,col) { g.fillStyle = col; g.fillRect(x,y,w,h); }
+
+  // ---- Head (front: 8,8 → 16,16) ----
+  // Skin base
+  fill(0, 0, 32, 16, '#ffe5d0');   // all head regions skin base
+  // Head front face
+  fill(8, 8, 8, 8, '#ffe5d0');
+  // Eyes (at row 11–12, cols 10–11 and 13–14)
+  fill(10, 11, 2, 1, '#bb4488'); fill(13, 11, 2, 1, '#bb4488');
+  // Pupils
+  fill(10, 12, 1, 1, '#220022'); fill(14, 12, 1, 1, '#220022');
+  // Mouth
+  fill(11, 14, 2, 1, '#cc6688');
+  // Hair top (8,0 → 16,8) golden blonde
+  fill(8, 0, 8, 8, '#e8b830');
+  // Hair bangs on forehead (top rows of face)
+  fill(8, 8, 8, 2, '#e8b830');
+  fill(8, 8, 2, 4, '#e8b830');  // left side bang
+  fill(14, 8, 2, 4, '#e8b830'); // right side bang
+  // Head right side (0,8 → 8,16) — hair
+  fill(0, 8, 8, 8, '#d4a020');
+  // Head left side (16,8 → 24,16) — hair
+  fill(16, 8, 8, 8, '#d4a020');
+  // Head back (24,8 → 32,16) — hair
+  fill(24, 8, 8, 8, '#c89018');
+
+  // ---- Body (front: 20,20 → 28,32) ----
+  // Black shirt
+  fill(20, 20, 8, 12, '#222222');
+  // Pink stripes
+  fill(20, 22, 8, 1, '#cc4488');
+  fill(20, 25, 8, 1, '#cc4488');
+  fill(20, 28, 8, 1, '#cc4488');
+  // Skull design center
+  fill(23, 23, 2, 2, '#ffffff');
+  fill(22, 26, 4, 1, '#ffffff');
+  // Body back (32,20 → 40,32)
+  fill(32, 20, 8, 12, '#1a1a1a');
+  // Body top/bottom/sides
+  fill(20, 16, 8, 4, '#222222');
+  fill(28, 20, 4, 12, '#222222');
+  fill(16, 20, 4, 12, '#222222');
+
+  // ---- Right Arm (front: 44,20 → 48,32) ----
+  fill(40, 16, 16, 4, '#222222');  // arm top+bottom
+  fill(40, 20, 4, 12, '#222222');  // arm right
+  fill(44, 20, 4, 12, '#222222');  // arm front — black shirt sleeve
+  fill(44, 28, 4, 4, '#ffe5d0');   // hand (skin)
+  fill(48, 20, 4, 12, '#222222');  // arm left
+  fill(52, 20, 4, 12, '#1a1a1a');  // arm back
+
+  // ---- Left Arm (front: 36,52 → 40,64) ---- (64x64 format)
+  fill(32, 48, 16, 4, '#222222');
+  fill(32, 52, 4, 12, '#222222');
+  fill(36, 52, 4, 12, '#222222');  // front — sleeve
+  fill(36, 60, 4, 4, '#ffe5d0');   // hand
+  fill(40, 52, 4, 12, '#222222');
+  fill(44, 52, 4, 12, '#1a1a1a');
+
+  // ---- Right Leg (front: 4,20 → 8,32) ----
+  fill(0, 16, 16, 4, '#6688aa');
+  fill(0, 20, 4, 12, '#6688aa');
+  fill(4, 20, 4, 12, '#6688aa');   // front — jeans
+  fill(4, 28, 4, 4, '#333344');    // boots
+  fill(8, 20, 4, 12, '#6688aa');
+  fill(12, 20, 4, 12, '#556688');
+
+  // ---- Left Leg (front: 20,52 → 24,64) ----
+  fill(16, 48, 16, 4, '#6688aa');
+  fill(16, 52, 4, 12, '#6688aa');
+  fill(20, 52, 4, 12, '#6688aa');  // front — jeans
+  fill(20, 60, 4, 4, '#333344');   // boots
+  fill(24, 52, 4, 12, '#6688aa');
+  fill(28, 52, 4, 12, '#556688');
+
+  return c;
+}
+
+// Handle avatar image drop — parse Minecraft skin PNG (64x64 or 64x32)
 function handleAvatarDrop(file) {
   if (!file || !file.type.startsWith('image/')) {
     avatarLoadingMsg = '画像ファイルではありません！';
     setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
     return;
   }
-  avatarLoadingMsg = '画像を解析中...';
+  avatarLoadingMsg = 'スキンを解析中...';
 
   const reader = new FileReader();
   reader.onload = function(e) {
     const img = new Image();
     img.onload = function() {
-      // Draw image to offscreen canvas to extract colors
-      const tmpCanvas = document.createElement('canvas');
-      const tmpCtx = tmpCanvas.getContext('2d');
-      const size = 64; // sample at small resolution
-      tmpCanvas.width = size;
-      tmpCanvas.height = size;
-      tmpCtx.drawImage(img, 0, 0, size, size);
-      const imageData = tmpCtx.getImageData(0, 0, size, size).data;
-
-      // Extract dominant colors using simple clustering
-      const colors = [];
-      for (let i = 0; i < imageData.length; i += 4) {
-        const r = imageData[i], g = imageData[i+1], b = imageData[i+2], a = imageData[i+3];
-        if (a < 128) continue; // skip transparent
-        // Only include colors with some saturation (skip near-gray)
-        const max = Math.max(r, g, b), min = Math.min(r, g, b);
-        if (max - min > 30 || max > 200 || min < 50) {
-          colors.push([r, g, b]);
-        }
-      }
-
-      if (colors.length < 10) {
-        avatarLoadingMsg = '色が少なすぎます — カラフルな画像を使ってください！';
-        setTimeout(() => { avatarLoadingMsg = ''; }, 2500);
+      const w = img.width, h = img.height;
+      // Validate Minecraft skin dimensions (64x64 or 64x32)
+      if (!((w === 64 && h === 64) || (w === 64 && h === 32))) {
+        avatarLoadingMsg = 'マイクラスキン (64x64 or 64x32) ではありません！';
+        setTimeout(() => { avatarLoadingMsg = ''; }, 3000);
         return;
       }
 
-      // Sort by brightness and pick representative colors
-      colors.sort((a, b) => (a[0]+a[1]+a[2]) - (b[0]+b[1]+b[2]));
-      const len = colors.length;
+      // Draw to 64x64 canvas (if 64x32, mirror arms/legs)
+      const skinCanvas = document.createElement('canvas');
+      skinCanvas.width = 64;
+      skinCanvas.height = 64;
+      const sCtx = skinCanvas.getContext('2d');
+      sCtx.imageSmoothingEnabled = false;
+      sCtx.drawImage(img, 0, 0);
 
-      // Pick colors from different regions of the sorted array
-      const darkColor = colors[Math.floor(len * 0.1)];
-      const midDark = colors[Math.floor(len * 0.3)];
-      const midColor = colors[Math.floor(len * 0.5)];
-      const midLight = colors[Math.floor(len * 0.7)];
-      const lightColor = colors[Math.floor(len * 0.9)];
-
-      function toHex(c) {
-        return '#' + c.map(v => Math.min(255, Math.max(0, v)).toString(16).padStart(2, '0')).join('');
+      // If old format (64x32), mirror right arm/leg to left arm/leg slots
+      if (h === 32) {
+        // Mirror right arm (40,16 16x16) → left arm (32,48 16x16)
+        sCtx.save();
+        sCtx.translate(48, 48);
+        sCtx.scale(-1, 1);
+        sCtx.drawImage(img, 40, 16, 16, 16, 0, 0, 16, 16);
+        sCtx.restore();
+        // Mirror right leg (0,16 16x16) → left leg (16,48 16x16)
+        sCtx.save();
+        sCtx.translate(32, 48);
+        sCtx.scale(-1, 1);
+        sCtx.drawImage(img, 0, 16, 16, 16, 0, 0, 16, 16);
+        sCtx.restore();
       }
 
-      // Generate avatar palette from image colors
-      avatarCustom = {
-        hair: toHex(midLight),
-        hairHighlight: toHex(lightColor),
-        shirt: toHex(midDark),
-        shirtStripe: toHex(midColor),
-        scarf: toHex(midColor),
-        eyes: toHex(midLight),
-        skin: toHex([
-          Math.min(255, lightColor[0] * 0.9 + 40),
-          Math.min(255, lightColor[1] * 0.85 + 30),
-          Math.min(255, lightColor[2] * 0.8 + 20)
-        ].map(Math.round)),
-        wings: toHex(lightColor),
-        boots: toHex(darkColor),
-        jeans: toHex(midDark),
-        blush: toHex([
-          Math.min(255, midColor[0] * 0.8 + 50),
-          Math.min(255, midColor[1] * 0.5 + 30),
-          Math.min(255, midColor[2] * 0.5 + 40)
-        ].map(Math.round)),
-      };
+      skinTexture = skinCanvas;
+      avatarCustom = { skinCanvas: skinCanvas };
 
-      avatarLoadingMsg = '✓ 画像からアバターを更新しました！';
+      avatarLoadingMsg = '✓ マイクラスキンを適用しました！';
       setTimeout(() => { avatarLoadingMsg = ''; }, 3000);
     };
     img.onerror = function() {
@@ -598,6 +653,17 @@ function handleAvatarDrop(file) {
     img.src = e.target.result;
   };
   reader.readAsDataURL(file);
+}
+
+// Initialize default skin on startup
+let defaultSkinCanvas = null;
+function getDefaultSkin() {
+  if (!defaultSkinCanvas) defaultSkinCanvas = buildDefaultSkin();
+  return defaultSkinCanvas;
+}
+// Get the active skin canvas (custom or default)
+function getActiveSkin() {
+  return skinTexture || getDefaultSkin();
 }
 
 function playKick(time) {
@@ -1119,7 +1185,8 @@ window.addEventListener('keydown', (e) => {
     } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 3) {
       // Reset avatar
       avatarCustom = null;
-      avatarLoadingMsg = 'アバターを初期化しました！';
+      skinTexture = null;
+      avatarLoadingMsg = 'スキンを初期化しました！';
       setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
     } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 4) {
       // Back to song select
@@ -1939,15 +2006,7 @@ function drawStar(x, y, scale, color, isLeft) {
 function drawCharacter() {
   const baseY = ROAD_BOTTOM;  // feet ON the road at judgment line
   const phase = charPhase;
-  // Avatar color palette — use custom or default
-  const av = avatarCustom || {
-    hair: '#e8b830', hairHighlight: '#f0d860',
-    shirt: '#222222', shirtStripe: '#cc4488',
-    scarf: '#dd5599', eyes: '#bb4488',
-    skin: '#ffe5d0', wings: '#e8c840',
-    boots: '#333344', jeans: '#6688aa',
-    blush: 'rgba(255,130,170,0.45)',
-  };
+  const skin = getActiveSkin();
 
   // Calculate character position based on action
   let cx = VX;
@@ -1971,362 +2030,106 @@ function drawCharacter() {
   // Running bounce (only while running)
   const isRunning = charAction === 'RUN';
   const bounce = isRunning ? Math.abs(Math.sin(phase)) * 4 : 0;
-  const legSwing = isRunning ? Math.sin(phase) * 10 : 0;
+  const legSwing = isRunning ? Math.sin(phase) * 0.4 : 0; // radians for leg rotation
+  const armSwing = isRunning ? Math.sin(phase + Math.PI) * 0.5 : 0;
 
   ctx.save();
   ctx.translate(cx, cy - bounce);
 
-  // Character scale
+  // Character scale — Minecraft blocky style
   const sc = 1.6;
   ctx.scale(sc, sc * scaleY);
 
   // Shadow on ground
   ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.beginPath();
-  ctx.ellipse(0, 2 + bounce, 20, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 2 + bounce, 16, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // --- Chibi Character: Blonde angel with punk outfit ---
+  // Pixel size for drawing — Minecraft skin parts are small (4-8px),
+  // we scale them up to game size. Character total height ~50px at sc=1.
+  // Head = 8x8 → draw at 20x20, Body = 8x12 → 12x18, Arm = 4x12 → 6x18, Leg = 4x12 → 6x18
+  const pxHead = 2.5;  // pixel multiplier for head (8px * 2.5 = 20)
+  const pxBody = 1.5;  // pixel multiplier for body
+  const pxLimb = 1.5;  // pixel multiplier for arms/legs
 
-  // GOLDEN WINGS (behind body)
-  const wingBob = Math.sin(phase * 0.8) * 3;
-  ctx.fillStyle = av.wings;
-  ctx.strokeStyle = av.wings;
-  ctx.lineWidth = 0.8;
-  // Left wing
-  ctx.save();
-  ctx.translate(-10, -18 + wingBob);
-  ctx.rotate(-0.3);
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.quadraticCurveTo(-20, -8, -30, -2);
-  ctx.quadraticCurveTo(-26, -14, -34, -10);
-  ctx.quadraticCurveTo(-28, -20, -32, -18);
-  ctx.quadraticCurveTo(-22, -24, -18, -16);
-  ctx.quadraticCurveTo(-12, -20, -8, -14);
-  ctx.quadraticCurveTo(-4, -16, 0, -8);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  // Wing feather highlights
-  ctx.fillStyle = av.hairHighlight || av.wings;
-  ctx.globalAlpha = 0.5;
-  ctx.beginPath();
-  ctx.moveTo(-2, -4);
-  ctx.quadraticCurveTo(-14, -12, -20, -14);
-  ctx.quadraticCurveTo(-12, -8, -2, -2);
-  ctx.closePath();
-  ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.restore();
-  // Right wing
-  ctx.save();
-  ctx.translate(10, -18 + wingBob);
-  ctx.rotate(0.3);
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.quadraticCurveTo(20, -8, 30, -2);
-  ctx.quadraticCurveTo(26, -14, 34, -10);
-  ctx.quadraticCurveTo(28, -20, 32, -18);
-  ctx.quadraticCurveTo(22, -24, 18, -16);
-  ctx.quadraticCurveTo(12, -20, 8, -14);
-  ctx.quadraticCurveTo(4, -16, 0, -8);
-  ctx.closePath();
-  ctx.fillStyle = av.wings;
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = av.hairHighlight || av.wings;
-  ctx.globalAlpha = 0.5;
-  ctx.beginPath();
-  ctx.moveTo(2, -4);
-  ctx.quadraticCurveTo(14, -12, 20, -14);
-  ctx.quadraticCurveTo(12, -8, 2, -2);
-  ctx.closePath();
-  ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.restore();
+  // Positions (origin at feet center, y goes up)
+  const legH = 12 * pxLimb;   // 18
+  const bodyH = 12 * pxBody;  // 18
+  const headH = 8 * pxHead;   // 20
+  const headW = 8 * pxHead;   // 20
+  const bodyW = 8 * pxBody;   // 12
+  const armW = 4 * pxLimb;    // 6
+  const armH = 12 * pxLimb;   // 18
+  const legW = 4 * pxLimb;    // 6
 
-  // Legs (jeans / denim blue)
-  ctx.fillStyle = av.jeans || '#6688aa';
-  ctx.beginPath();
-  ctx.ellipse(-5 - legSwing * 0.3, -3, 5, 8, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(5 + legSwing * 0.3, -3, 5, 8, 0, 0, Math.PI * 2);
-  ctx.fill();
+  const feetY = 0;             // bottom
+  const legTopY = -legH;       // -18
+  const bodyTopY = legTopY - bodyH; // -36
+  const headTopY = bodyTopY - headH; // -56
 
-  // Shoes (dark boots)
-  ctx.fillStyle = av.boots;
-  ctx.beginPath();
-  ctx.ellipse(-5 - legSwing * 0.3, 4, 5, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(5 + legSwing * 0.3, 4, 5, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Blue lace accents
-  ctx.fillStyle = '#4466cc';
-  ctx.beginPath();
-  ctx.ellipse(-5 - legSwing * 0.3, 3, 2, 0.8, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(5 + legSwing * 0.3, 3, 2, 0.8, 0, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.imageSmoothingEnabled = false; // crisp pixels!
 
-  // Body / Torso (punk black shirt with skull)
-  const bodyGrad = ctx.createLinearGradient(0, -22, 0, -6);
-  bodyGrad.addColorStop(0, av.shirt);
-  bodyGrad.addColorStop(1, av.shirt);
-  ctx.fillStyle = bodyGrad;
-  ctx.beginPath();
-  ctx.ellipse(0, -14, 12, 10, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Pink horizontal stripes on shirt (punk style)
-  ctx.fillStyle = av.shirtStripe || av.scarf;
-  ctx.globalAlpha = 0.6;
-  ctx.fillRect(-10, -19, 20, 2);
-  ctx.fillRect(-10, -15, 20, 2);
-  ctx.fillRect(-10, -11, 20, 2);
-  ctx.globalAlpha = 1;
-
-  // Skull on shirt
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.ellipse(0, -14, 4, 3.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Skull eyes
-  ctx.fillStyle = '#222222';
-  ctx.beginPath();
-  ctx.arc(-1.5, -14.5, 1, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(1.5, -14.5, 1, 0, Math.PI * 2);
-  ctx.fill();
-  // Skull jaw
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(-2.5, -11.5, 5, 2);
-  ctx.fillStyle = '#222222';
-  for (let i = -2; i <= 2; i++) {
-    ctx.fillRect(i * 1.2 - 0.3, -11.5, 0.6, 2);
+  // Helper: draw a skin region scaled to target rect
+  // sx,sy,sw,sh = source region in skin texture
+  // dx,dy,dw,dh = destination rect
+  function drawPart(sx, sy, sw, sh, dx, dy, dw, dh) {
+    ctx.drawImage(skin, sx, sy, sw, sh, dx, dy, dw, dh);
   }
 
-  // Pink scarf / collar
-  ctx.fillStyle = av.scarf;
-  ctx.beginPath();
-  ctx.ellipse(0, -22, 11, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Scarf black stripes
-  ctx.fillStyle = '#222222';
-  ctx.globalAlpha = 0.5;
-  for (let sx = -9; sx < 9; sx += 4) {
-    ctx.fillRect(sx, -24, 1.5, 4);
+  // --- RIGHT LEG ---
+  ctx.save();
+  ctx.translate(-legW/2, feetY - legH);
+  ctx.rotate(legSwing);
+  // Right leg front: skin(4,20, 4,12)
+  drawPart(4, 20, 4, 12, -legW/2, 0, legW, legH);
+  ctx.restore();
+
+  // --- LEFT LEG ---
+  ctx.save();
+  ctx.translate(legW/2, feetY - legH);
+  ctx.rotate(-legSwing);
+  // Left leg front: skin(20,52, 4,12)
+  drawPart(20, 52, 4, 12, -legW/2, 0, legW, legH);
+  ctx.restore();
+
+  // --- BODY ---
+  // Body front: skin(20,20, 8,12)
+  drawPart(20, 20, 8, 12, -bodyW/2, bodyTopY, bodyW, bodyH);
+
+  // --- RIGHT ARM ---
+  ctx.save();
+  ctx.translate(-bodyW/2 - armW/2, bodyTopY);
+  ctx.rotate(armSwing);
+  // Right arm front: skin(44,20, 4,12)
+  drawPart(44, 20, 4, 12, -armW/2, 0, armW, armH);
+  ctx.restore();
+
+  // --- LEFT ARM ---
+  ctx.save();
+  ctx.translate(bodyW/2 + armW/2, bodyTopY);
+  ctx.rotate(-armSwing);
+  // Left arm front: skin(36,52, 4,12)
+  drawPart(36, 52, 4, 12, -armW/2, 0, armW, armH);
+  ctx.restore();
+
+  // --- HEAD ---
+  // Head front: skin(8,8, 8,8)
+  drawPart(8, 8, 8, 8, -headW/2, headTopY, headW, headH);
+
+  // --- HEAD OVERLAY (hat layer) --- skin(40,8, 8,8)
+  // Check if overlay has any non-transparent pixels
+  const hatCtx = skin.getContext('2d');
+  const hatData = hatCtx.getImageData(40, 8, 8, 8).data;
+  let hasHat = false;
+  for (let i = 3; i < hatData.length; i += 4) {
+    if (hatData[i] > 10) { hasHat = true; break; }
   }
-  ctx.globalAlpha = 1;
+  if (hasHat) {
+    drawPart(40, 8, 8, 8, -headW/2 - 1, headTopY - 1, headW + 2, headH + 2);
+  }
 
-  // Arms (black sleeves)
-  const armSwing = isRunning ? Math.sin(phase + Math.PI) * 8 : 0;
-  ctx.fillStyle = av.shirt;
-  ctx.beginPath();
-  ctx.ellipse(-14 - armSwing * 0.2, -16, 4, 6, 0.3, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(14 + armSwing * 0.2, -16, 4, 6, -0.3, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Wristbands (studded, dark)
-  ctx.fillStyle = '#444444';
-  ctx.beginPath();
-  ctx.ellipse(-14 - armSwing * 0.2, -12, 3.5, 2, 0.3, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(14 + armSwing * 0.2, -12, 3.5, 2, -0.3, 0, Math.PI * 2);
-  ctx.fill();
-  // Studs
-  ctx.fillStyle = '#cccccc';
-  ctx.beginPath();
-  ctx.arc(-15 - armSwing * 0.2, -12, 0.8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(-13 - armSwing * 0.2, -12, 0.8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(15 + armSwing * 0.2, -12, 0.8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(13 + armSwing * 0.2, -12, 0.8, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Hands (round, skin)
-  ctx.fillStyle = av.skin;
-  ctx.beginPath();
-  ctx.arc(-14 - armSwing * 0.2, -11, 3, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(14 + armSwing * 0.2, -11, 3, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Head (big round — chibi proportions)
-  const headR = 18;
-  const headY = -38;
-
-  // Hair base (golden blonde, covers back of head)
-  ctx.fillStyle = av.hair;
-  ctx.beginPath();
-  ctx.arc(0, headY, headR + 2, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Face (skin circle)
-  ctx.fillStyle = av.skin;
-  ctx.beginPath();
-  ctx.arc(0, headY, headR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Eyes (big, cute — front-facing chibi eyes)
-  // White part
-  ctx.fillStyle = '#fff';
-  ctx.beginPath();
-  ctx.ellipse(-7, headY + 1, 6, 7, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(7, headY + 1, 6, 7, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Iris (big, pinkish-purple)
-  ctx.fillStyle = av.eyes;
-  ctx.beginPath();
-  ctx.ellipse(-7, headY + 2, 4.5, 5.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(7, headY + 2, 4.5, 5.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Pupil (dark)
-  ctx.fillStyle = '#220022';
-  ctx.beginPath();
-  ctx.ellipse(-7, headY + 3, 2.5, 3.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(7, headY + 3, 2.5, 3.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Eye sparkles
-  ctx.fillStyle = '#fff';
-  ctx.beginPath();
-  ctx.arc(-8.5, headY - 1, 1.8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(5.5, headY - 1, 1.8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(-6, headY + 4, 1, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(8, headY + 4, 1, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Blush (pink circles on cheeks)
-  ctx.fillStyle = av.blush || 'rgba(255,130,170,0.45)';
-  ctx.beginPath();
-  ctx.ellipse(-12, headY + 6, 4, 2.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(12, headY + 6, 4, 2.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Mouth (small smirk)
-  ctx.strokeStyle = '#aa5577';
-  ctx.lineWidth = 1.2;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(-3, headY + 9);
-  ctx.quadraticCurveTo(0, headY + 12, 4, headY + 8);
-  ctx.stroke();
-
-  // Heart mark on cheek (like reference image)
-  ctx.fillStyle = '#cc3366';
-  ctx.font = '5px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('♥', 10, headY + 10);
-
-  // Hair bangs (front fringe over forehead — golden blonde)
-  ctx.fillStyle = av.hair;
-  ctx.beginPath();
-  ctx.moveTo(-headR - 1, headY - 6);
-  ctx.quadraticCurveTo(-headR + 2, headY - headR - 4, -6, headY - headR + 2);
-  ctx.lineTo(-3, headY - 10);
-  ctx.lineTo(0, headY - headR + 3);
-  ctx.lineTo(3, headY - 10);
-  ctx.lineTo(6, headY - headR + 2);
-  ctx.quadraticCurveTo(headR - 2, headY - headR - 4, headR + 1, headY - 6);
-  ctx.lineTo(headR, headY - 4);
-  ctx.quadraticCurveTo(0, headY - 8, -headR, headY - 4);
-  ctx.closePath();
-  ctx.fill();
-
-  // Hair side strands
-  ctx.beginPath();
-  ctx.moveTo(-headR, headY);
-  ctx.quadraticCurveTo(-headR - 4, headY + 10, -headR + 2, headY + 16);
-  ctx.lineTo(-headR + 1, headY + 4);
-  ctx.closePath();
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(headR, headY);
-  ctx.quadraticCurveTo(headR + 4, headY + 10, headR - 2, headY + 16);
-  ctx.lineTo(headR - 1, headY + 4);
-  ctx.closePath();
-  ctx.fill();
-
-  // Hair highlights (lighter gold streaks)
-  ctx.strokeStyle = av.hairHighlight || av.hair;
-  ctx.lineWidth = 1.2;
-  ctx.globalAlpha = 0.6;
-  ctx.beginPath();
-  ctx.moveTo(-8, headY - headR + 4);
-  ctx.quadraticCurveTo(-6, headY - headR + 8, -4, headY - 8);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(4, headY - headR + 4);
-  ctx.quadraticCurveTo(6, headY - headR + 8, 8, headY - 8);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-
-  // Crown / headpiece (gold with red gems — matching reference)
-  const crownY = headY - headR - 6;
-  // Crown base (white fuzzy rim)
-  ctx.fillStyle = '#f0ece0';
-  ctx.beginPath();
-  ctx.ellipse(0, crownY + 6, 10, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Crown body (gold)
-  ctx.fillStyle = '#d4a020';
-  ctx.beginPath();
-  ctx.moveTo(-8, crownY + 5);
-  ctx.lineTo(-9, crownY - 4);
-  ctx.lineTo(-4, crownY);
-  ctx.lineTo(0, crownY - 8);
-  ctx.lineTo(4, crownY);
-  ctx.lineTo(9, crownY - 4);
-  ctx.lineTo(8, crownY + 5);
-  ctx.closePath();
-  ctx.fill();
-  // Crown highlight
-  ctx.strokeStyle = av.wings;
-  ctx.lineWidth = 0.8;
-  ctx.stroke();
-  // Red gems on crown
-  ctx.fillStyle = '#cc2222';
-  ctx.beginPath();
-  ctx.arc(-5, crownY + 1, 2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(5, crownY + 1, 2, 0, Math.PI * 2);
-  ctx.fill();
-  // Center cross/ornament
-  ctx.fillStyle = '#d4a020';
-  ctx.fillRect(-1, crownY - 12, 2, 6);
-  ctx.fillRect(-3, crownY - 10, 6, 2);
-
+  ctx.imageSmoothingEnabled = true;
   ctx.restore();
 }
 
@@ -2958,10 +2761,10 @@ function drawSettingsScreen() {
 
     ctx.fillStyle = isAvatar ? 'rgba(255,200,230,0.8)' : 'rgba(180,150,220,0.5)';
     ctx.font = '14px sans-serif';
-    ctx.fillText('画像ファイルをドラッグ＆ドロップ', VX, avatarY + 55);
+    ctx.fillText('マイクラスキン画像をドラッグ＆ドロップ', VX, avatarY + 55);
     ctx.fillStyle = isAvatar ? 'rgba(255,180,220,0.6)' : 'rgba(150,130,200,0.4)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('画像の色がアバターに反映されます', VX, avatarY + 80);
+    ctx.fillText('64x64 or 64x32 のスキンPNG', VX, avatarY + 80);
   }
 
   // Current avatar status
@@ -2969,16 +2772,15 @@ function drawSettingsScreen() {
   if (avatarCustom) {
     ctx.fillStyle = '#ff88cc';
     ctx.font = '14px sans-serif';
-    ctx.fillText('✨ カスタムアバター適用中！', VX, statusY);
-    // Show color swatches
-    const swatchColors = [avatarCustom.hair, avatarCustom.shirt, avatarCustom.scarf, avatarCustom.eyes, avatarCustom.wings];
-    swatchColors.forEach((c, i) => {
-      ctx.fillStyle = c;
-      ctx.fillRect(VX - 50 + i * 22, statusY + 12, 18, 12);
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(VX - 50 + i * 22, statusY + 12, 18, 12);
-    });
+    ctx.fillText('✨ カスタムスキン適用中！', VX, statusY);
+    // Draw a mini skin face preview
+    const sk = getActiveSkin();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(sk, 8, 8, 8, 8, VX - 16, statusY + 8, 32, 32);
+    ctx.imageSmoothingEnabled = true;
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(VX - 16, statusY + 8, 32, 32);
   } else {
     ctx.fillStyle = 'rgba(150,200,255,0.5)';
     ctx.font = '14px sans-serif';
@@ -3001,7 +2803,7 @@ function drawSettingsScreen() {
   }
   ctx.fillStyle = isReset ? '#ff6644' : 'rgba(200,100,100,0.5)';
   ctx.font = isReset ? 'bold 20px sans-serif' : '18px sans-serif';
-  ctx.fillText('🔄 アバターを初期化', VX, resetY);
+  ctx.fillText('🔄 スキンを初期化', VX, resetY);
   ctx.shadowBlur = 0;
   if (isReset) {
     ctx.fillStyle = 'rgba(255,100,80,0.5)';
@@ -3031,49 +2833,29 @@ function drawSettingsScreen() {
   ctx.font = '12px sans-serif';
   ctx.fillText('↑ ↓ で移動 ｜ スペースで決定 ｜ ESCで戻る', VX, H - 20);
 
-  // Draw avatar preview on the right
+  // Draw avatar preview on the right — Minecraft style
   ctx.save();
   ctx.translate(W - 120, 420);
-  ctx.scale(0.6, 0.6);
-  // Mini avatar preview (draw a simplified version)
-  const av = avatarCustom || {
-    hair: '#e8b830', hairHighlight: '#f0d860',
-    shirt: '#222222', shirtStripe: '#cc4488',
-    scarf: '#dd5599', eyes: '#bb4488',
-    skin: '#ffe5d0', wings: '#e8c840',
-    boots: '#333344', jeans: '#6688aa',
-    blush: 'rgba(255,130,170,0.45)',
-  };
-  // Simple preview circle head
-  ctx.fillStyle = av.hair;
-  ctx.beginPath();
-  ctx.arc(0, -20, 28, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = av.skin;
-  ctx.beginPath();
-  ctx.arc(0, -20, 25, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = av.eyes;
-  ctx.beginPath();
-  ctx.arc(-8, -18, 6, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(8, -18, 6, 0, Math.PI * 2);
-  ctx.fill();
-  // Body
-  ctx.fillStyle = av.shirt;
-  ctx.beginPath();
-  ctx.ellipse(0, 14, 18, 16, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = av.scarf;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 16, 5, 0, 0, Math.PI * 2);
-  ctx.fill();
+  const sk = getActiveSkin();
+  ctx.imageSmoothingEnabled = false;
+  // Head (8,8 → 16,16) scaled to 48x48
+  ctx.drawImage(sk, 8, 8, 8, 8, -24, -60, 48, 48);
+  // Body (20,20 → 28,32) scaled to 28x42
+  ctx.drawImage(sk, 20, 20, 8, 12, -14, -12, 28, 42);
+  // Right arm (44,20 → 48,32) scaled to 14x42
+  ctx.drawImage(sk, 44, 20, 4, 12, -28, -12, 14, 42);
+  // Left arm (36,52 → 40,64) scaled to 14x42
+  ctx.drawImage(sk, 36, 52, 4, 12, 14, -12, 14, 42);
+  // Right leg (4,20 → 8,32) scaled to 14x42
+  ctx.drawImage(sk, 4, 20, 4, 12, -14, 30, 14, 42);
+  // Left leg (20,52 → 24,64) scaled to 14x42
+  ctx.drawImage(sk, 20, 52, 4, 12, 0, 30, 14, 42);
+  ctx.imageSmoothingEnabled = true;
   // Label
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 16px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('プレビュー', 0, 55);
+  ctx.fillText('プレビュー', 0, 90);
   ctx.restore();
 
   ctx.restore();
