@@ -1494,9 +1494,9 @@ function drawRhythmBalls() {
   const now = musicTime();
   const r = RHYTHM_BALL_RADIUS;
 
-  // Target position: slightly below screen center
+  // Target position: slightly below screen center (y=424, screen center=384)
   const targetX = VX;
-  const targetY = H / 2 + 40;  // slightly below screen center
+  const targetY = H / 2 + 40;
 
   // Start from screen edges, same Y as target (straight horizontal line)
   const leftStartX = -r;        // left edge of screen
