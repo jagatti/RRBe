@@ -1494,9 +1494,13 @@ function drawRhythmBalls() {
   const now = musicTime();
   const r = RHYTHM_BALL_RADIUS;
 
-  // Target position: above character head, near arch apex at perfect timing
+  // Target position: slightly below screen center
   const targetX = VX;
-  const targetY = ROAD_BOTTOM - 175;  // above character head, near arch top
+  const targetY = H / 2 + 40;  // slightly below screen center
+
+  // Start from screen edges, same Y as target (straight horizontal line)
+  const leftStartX = -r;        // left edge of screen
+  const rightStartX = W + r;    // right edge of screen
 
   ctx.save();
 
@@ -1506,22 +1510,15 @@ function drawRhythmBalls() {
     const timeDiff = o.time - now;
     if (timeDiff < 0 || timeDiff > RHYTHM_BALL_TRAVEL) continue;
 
-    // Progress: 0 = at edge, 1 = at target
+    // Progress: 0 = at edge, 1 = at target — constant speed (linear)
     const progress = 1 - (timeDiff / RHYTHM_BALL_TRAVEL);
 
-    // Easing for smooth deceleration
-    const eased = 1 - Math.pow(1 - progress, 2);
+    // Straight line, constant speed — no easing
+    const leftX = leftStartX + (targetX - leftStartX) * progress;
+    const rightX = rightStartX + (targetX - rightStartX) * progress;
+    const ballY = targetY;  // same Y throughout (straight horizontal)
 
-    // Balls come from left and right sides, converging above character
-    const startY = targetY - 40;  // start slightly higher
-    const leftStartX = VX - 300;
-    const rightStartX = VX + 300;
-
-    const leftX = leftStartX + (targetX - leftStartX) * eased;
-    const rightX = rightStartX + (targetX - rightStartX) * eased;
-    const ballY = startY + (targetY - startY) * eased;
-
-    // Alpha: fade in, full near target
+    // Alpha: fade in quickly, full near target
     const alpha = Math.min(1, progress * 2.5);
 
     // Default orange color
@@ -1544,7 +1541,7 @@ function drawRhythmBalls() {
     if (progress > 0.1) {
       ctx.globalAlpha = alpha * 0.2;
       ctx.shadowBlur = 0;
-      const trailOff = (1 - eased) * 30;
+      const trailOff = (1 - progress) * 30;
       ctx.beginPath();
       ctx.arc(leftX - trailOff, ballY, r * 0.6, 0, Math.PI * 2);
       ctx.fill();
@@ -1676,7 +1673,7 @@ function drawObstacles() {
 
 function drawPylon(x, y, scale, color, isLeft) {
   // Traffic cone / pylon shape — slim
-  const w = 18 * scale;
+  const w = 14 * scale;
   const h = 70 * scale;
 
   ctx.save();
@@ -1705,8 +1702,8 @@ function drawPylon(x, y, scale, color, isLeft) {
 }
 
 function drawArch(x, y, scale, color) {
-  // Arch / gate shape — tall ∩ shape with wider opening so obstacles behind are visible
-  const w = 80 * scale;      // wider opening (half-width)
+  // Arch / gate shape — tall ∩ shape with wide opening so obstacles behind are visible
+  const w = 110 * scale;     // wide opening (half-width) for clear view of next obstacle
   const h = 190 * scale;     // tall total height
   const postW = 12 * scale;
   const postH = h * 0.78;    // very tall vertical posts (78% of height)
