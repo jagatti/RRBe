@@ -1392,7 +1392,7 @@ function update(deltaT) {
     charActionTimer -= deltaT;
     if (charAction === 'JUMP') {
       const t = 1 - (charActionTimer / ACTION_DUR);
-      charJumpY = Math.sin(t * Math.PI) * 55;
+      charJumpY = Math.sin(t * Math.PI) * 90;
     }
     if (charActionTimer <= 0) {
       charAction = 'RUN';
@@ -2049,13 +2049,15 @@ function drawCharacter() {
   ctx.translate(cx, cy - bounce);
 
   // Character scale — Minecraft blocky style
-  const sc = 1.6;
+  // Character total unscaled height ≈ 56px. Arch at foreground ≈ 161px.
+  // sc=2.6 → ~146px: slightly smaller than the arch.
+  const sc = 2.6;
   ctx.scale(sc, sc * scaleY);
 
   // Shadow on ground
   ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.beginPath();
-  ctx.ellipse(0, 2 + bounce, 16, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 2 + bounce, 20, 6, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // Pixel size for drawing — Minecraft skin parts are small (4-8px),
