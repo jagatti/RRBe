@@ -895,6 +895,7 @@ let gameState = 'SONG_SELECT';
 let songSelectIndex = 0;
 let obstacles = [];
 let score = 0, combo = 0, maxCombo = 0;
+let comboPopTimer = 0; // animation timer for combo pop effect
 let judgeCounts = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
 let accuracy = 100;
 let lastJudge = null, judgeTimer = 0;
@@ -921,8 +922,8 @@ let keyFlash = { ArrowLeft: 0, ArrowRight: 0, ArrowDown: 0, ArrowUp: 0 };
 
 // Rhythm ball flash state (for hit feedback)
 let rhythmBallFlashes = [];  // { time, judgment, timer }
-const RHYTHM_BALL_RADIUS = 12;
-const RHYTHM_BALL_TRAVEL = 1.0; // time window (seconds) for ball visibility and travel to center
+const RHYTHM_BALL_RADIUS = 15;
+const RHYTHM_BALL_TRAVEL = 0.75; // time window (seconds) for ball visibility and travel to center
 
 // ============================================================
 // PERSPECTIVE MATH
@@ -1132,6 +1133,7 @@ function judgeKeyPress(keyCode) {
     combo = 0;
   } else {
     combo++;
+    comboPopTimer = 0.15; // trigger pop animation
     if (combo > maxCombo) maxCombo = combo;
   }
 
@@ -1206,6 +1208,7 @@ function update(deltaT) {
 
   beatFlash = Math.max(0, beatFlash - deltaT * 4);
   judgeTimer = Math.max(0, judgeTimer - deltaT);
+  comboPopTimer = Math.max(0, comboPopTimer - deltaT);
   for (const k in keyFlash) keyFlash[k] = Math.max(0, keyFlash[k] - deltaT * 5);
 
   // Character action timer
@@ -1521,11 +1524,18 @@ function drawRhythmBalls() {
     // Alpha: fade in quickly, full near target
     const alpha = Math.min(1, progress * 2.5);
 
-    // Default orange color
+    // Color transitions: orange → white as balls approach PERFECT zone (center)
+    // PERFECT window = T_PERFECT (0.055s), start blending at ~0.12s out
+    const perfectZone = Math.max(0, Math.min(1, (progress - 0.85) / 0.15)); // 0→1 in last 15%
+    const rr = Math.round(255);
+    const gg = Math.round(136 + (255 - 136) * perfectZone);
+    const bb = Math.round(51 + (255 - 51) * perfectZone);
+    const ballCol = `rgb(${rr},${gg},${bb})`;
+
     ctx.globalAlpha = alpha * 0.9;
-    ctx.fillStyle = '#ff8833';
-    ctx.shadowColor = '#ff8833';
-    ctx.shadowBlur = 6;
+    ctx.fillStyle = ballCol;
+    ctx.shadowColor = ballCol;
+    ctx.shadowBlur = 6 + perfectZone * 10;
 
     // Left ball
     ctx.beginPath();
@@ -1703,7 +1713,7 @@ function drawPylon(x, y, scale, color, isLeft) {
 
 function drawArch(x, y, scale, color) {
   // Arch / gate shape — tall narrow ∩ shape: very tall posts with narrow rounded top
-  const w = 70 * scale;      // moderate width (half-width of opening)
+  const w = 90 * scale;      // wider arch (half-width of opening)
   const h = 190 * scale;     // much taller total height
   const postW = 14 * scale;
   const postH = h * 0.78;    // very tall vertical posts (78% of height)
@@ -2233,25 +2243,27 @@ function drawHUD() {
     ctx.fillRect(0, 0, W, H);
   }
 
-  // ---- Combo (top center, larger) ----
+  // ---- Combo (top center, larger with pop animation) ----
   if (combo > 0) {
-    const comboSize = Math.min(60, 42 + combo * 0.2);
+    const comboSize = Math.min(72, 52 + combo * 0.2);
+    const popScale = 1 + comboPopTimer / 0.15 * 0.25; // 1.0→1.25 on hit, decays back
 
     ctx.save();
     ctx.translate(VX, 52);
+    ctx.scale(popScale, popScale);
 
-    ctx.shadowColor = '#ffcc00';
-    ctx.shadowBlur = 12;
-    ctx.fillStyle = 'rgba(255,238,68,0.9)';
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = '#ffffff';
     ctx.font = `bold ${comboSize}px 'Impact', sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(combo, 0, 0);
 
     ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255,204,0,0.7)';
-    ctx.font = 'bold 18px sans-serif';
-    ctx.fillText('COMBO', 0, comboSize / 2 + 12);
+    ctx.fillStyle = 'rgba(255,255,200,0.8)';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText('COMBO', 0, comboSize / 2 + 14);
 
     ctx.restore();
   }
@@ -2271,13 +2283,13 @@ function drawHUD() {
   // ---- Accuracy gauge (top-right circle) ----
   drawAccuracyGauge(W - 70, 110, 35);
 
-  // ---- Judgment stats (left side) ----
+  // ---- Judgment stats (bottom-left) ----
   ctx.shadowBlur = 0;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.font = 'bold 16px sans-serif';
   ctx.fillStyle = '#00ddff';
-  ctx.fillText('\u5224\u5B9A ' + accuracy.toFixed(1) + '%', 18, 20);
+  ctx.fillText('\u5224\u5B9A ' + accuracy.toFixed(1) + '%', 18, H - 130);
 
   const stats = [
     ['PERFECT', judgeCounts.PERFECT, JUDGE_COLORS.PERFECT],
@@ -2290,8 +2302,8 @@ function drawHUD() {
   stats.forEach(function(entry, idx) {
     ctx.fillStyle = entry[2];
     ctx.globalAlpha = 0.85;
-    ctx.fillText(entry[0], 18, 44 + idx * 18);
-    ctx.fillText(String(entry[1]), 85, 44 + idx * 18);
+    ctx.fillText(entry[0], 18, H - 108 + idx * 18);
+    ctx.fillText(String(entry[1]), 85, H - 108 + idx * 18);
   });
   ctx.globalAlpha = 1;
 
@@ -3196,7 +3208,7 @@ function resetGame() {
     obstacles = generateChart();
   }
 
-  score = 0; combo = 0; maxCombo = 0;
+  score = 0; combo = 0; maxCombo = 0; comboPopTimer = 0;
   judgeCounts = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
   accuracy = 100;
   lastJudge = null; judgeTimer = 0;
