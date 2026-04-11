@@ -41,7 +41,9 @@ const ROAD_HW = 384;         // half-width of road at bottom
 const PERSP_POW = 1.5;
 
 // Obstacle scroll
-const OBS_SCROLL_TIME = 1.2; // seconds from spawn to judgment line (closer appearance)
+const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
+let scrollSpeedMult = 1.0; // user-adjustable: 0.5x(slow) – 3.0x(fast), default 1.0
+function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
 
 // Timing windows (seconds)
 const T_PERFECT = 0.055;
@@ -194,7 +196,7 @@ let avatarDropHover = false;
 let avatarLoadingMsg = '';
 
 // Settings screen state
-let settingsSelection = 0; // 0=volume, 1=avatar drop zone, 2=reset avatar, 3=back
+let settingsSelection = 0; // 0=volume, 1=scroll speed, 2=avatar drop zone, 3=reset avatar, 4=back
 
 function applyVolume() {
   if (masterGain) masterGain.gain.value = gameVolume * 0.80; // scale to comfortable max
@@ -695,33 +697,35 @@ function generateChart() {
     return (seed & 0x7fffffff) / 0x7fffffff;
   }
 
-  // Musical step positions within a bar (0-15 = 16th notes in 4 beats)
-  // Kick: 0, 4, 8, 12  |  Snare: 4, 12  |  HiHat: 2, 6, 10, 14
-  // We place obstacles on these rhythmic positions for musical feel
+  // Build step patterns FROM the song's actual drum data so obstacles land on audible beats
+  const sd = curSongData;
+  const kickArr = [...sd.kick].sort((a,b) => a - b);
+  const snareArr = [...sd.snare].sort((a,b) => a - b);
+  const hihatArr = [...sd.ohihat].sort((a,b) => a - b);
 
-  // Easy: obstacles on beats 1 and 3 (steps 0 and 8) — slow, on-the-beat
-  // Normal: obstacles on all kick positions (steps 0, 4, 8, 12) — quarter notes
-  // Hard: obstacles on kick + snare + some 8th notes (steps 0, 2, 4, 8, 10, 12)
-  // Expert: obstacles on every strong rhythmic position (16th note density)
-
-  const easySteps   = [0, 8];                     // half-note feel
-  const normalSteps = [0, 4, 8, 12];              // quarter-note feel
-  const hardSteps   = [0, 4, 6, 8, 12, 14];       // 8th-note syncopation
-  const expertSteps = [0, 2, 4, 6, 8, 10, 12, 14]; // 8th-note full
+  // Easy: strong kicks only (beats 1 & 3, or first two distinct kicks)
+  const easySteps   = kickArr.length >= 4 ? [kickArr[0], kickArr[2]] : [kickArr[0], kickArr[Math.min(1, kickArr.length-1)]];
+  // Normal: all kick positions = quarter-note feel aligned with actual kicks
+  const normalSteps = kickArr.slice();
+  // Hard: kicks + snares + some hihats for syncopation (deduplicated)
+  const hardSet = new Set([...kickArr, ...snareArr, ...hihatArr.filter((_,i) => i % 2 === 0)]);
+  const hardSteps   = [...hardSet].sort((a,b) => a - b);
+  // Expert: kicks + snares + all hihats = full 8th-note coverage
+  const expertSet = new Set([...kickArr, ...snareArr, ...hihatArr]);
+  const expertSteps = [...expertSet].sort((a,b) => a - b);
   // 16th-note patterns for Chaos Protocol (song 3)
   const expert16thA = [0, 2, 3, 4, 6, 8, 10, 11, 12, 14]; // 16th bursts mixed with 8ths
   const expert16thB = [0, 1, 4, 6, 7, 8, 10, 12, 13, 14, 15]; // dense 16th runs
   const expert16thC = [0, 2, 4, 5, 6, 8, 10, 12, 13, 14];    // syncopated 16ths
 
-  // Type selection weighted by musical position
-  // Kick positions → BLOCK(jump) or PYLON, Snare → ARCH(duck) or STAR, Offbeat → varied
+  // Type selection weighted by musical position (uses actual per-song drum data)
   function pickType(step, r) {
-    const isKick = (step === 0 || step === 8);
-    const isSnare = (step === 4 || step === 12);
-    const isOffbeat = (step % 4 !== 0);
+    const isKick = sd.kick.has(step);
+    const isSnare = sd.snare.has(step);
+    const isHihat = sd.ohihat.has(step);
 
-    if (isKick) {
-      // Strong beat: jump or dodge
+    if (isKick && !isSnare) {
+      // Kick beat: jump or dodge
       if (r < 0.3) return 3;      // BLOCK (jump)
       else if (r < 0.55) return 0; // PYLON_R
       else if (r < 0.8) return 1;  // PYLON_L
@@ -732,8 +736,8 @@ function generateChart() {
       else if (r < 0.55) return 3; // BLOCK (jump)
       else if (r < 0.75) return 4; // STAR_R
       else return r < 0.9 ? 5 : 0; // STAR_L or PYLON
-    } else if (isOffbeat) {
-      // Offbeat/syncopation: stars and varied
+    } else if (isHihat) {
+      // Hihat/offbeat: stars and varied
       if (r < 0.25) return 4;      // STAR_R
       else if (r < 0.5) return 5;  // STAR_L
       else if (r < 0.65) return 0; // PYLON_R
@@ -920,21 +924,25 @@ window.addEventListener('keydown', (e) => {
       applyVolume();
     }
     if (e.code === 'ArrowUp') {
-      settingsSelection = (settingsSelection + 3) % 4; // 0,1,2,3
+      settingsSelection = (settingsSelection + 4) % 5; // 0,1,2,3,4
     } else if (e.code === 'ArrowDown') {
-      settingsSelection = (settingsSelection + 1) % 4;
+      settingsSelection = (settingsSelection + 1) % 5;
     } else if (e.code === 'ArrowLeft' && settingsSelection === 0) {
       gameVolume = Math.max(0, gameVolume - 0.05);
       applyVolume();
     } else if (e.code === 'ArrowRight' && settingsSelection === 0) {
       gameVolume = Math.min(1, gameVolume + 0.05);
       applyVolume();
-    } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 2) {
+    } else if (e.code === 'ArrowLeft' && settingsSelection === 1) {
+      scrollSpeedMult = Math.max(0.5, +(scrollSpeedMult - 0.1).toFixed(1));
+    } else if (e.code === 'ArrowRight' && settingsSelection === 1) {
+      scrollSpeedMult = Math.min(3.0, +(scrollSpeedMult + 0.1).toFixed(1));
+    } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 3) {
       // Reset avatar
       avatarCustom = null;
       avatarLoadingMsg = 'アバターを初期化しました！';
       setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
-    } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 3) {
+    } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 4) {
       // Back to song select
       gameState = 'SONG_SELECT';
     } else if (e.code === 'Escape') {
@@ -1142,10 +1150,10 @@ function update(deltaT) {
 
   // Goal line: start showing when near the end of the song
   const lastObsTime = obstacles.length > 0 ? obstacles[obstacles.length - 1].time : SONG_DURATION;
-  const goalAppearTime = lastObsTime - OBS_SCROLL_TIME * 0.5;
+  const goalAppearTime = lastObsTime - effectiveScrollTime() * 0.5;
   if (now >= goalAppearTime) {
     // goalLineZ goes from 0 (horizon) to 1 (judgment line)
-    goalLineZ = Math.min(1.3, (now - goalAppearTime) / OBS_SCROLL_TIME);
+    goalLineZ = Math.min(1.3, (now - goalAppearTime) / effectiveScrollTime());
   } else {
     goalLineZ = -1;
   }
@@ -1527,7 +1535,7 @@ function drawObstacles() {
   // Collect visible obstacles
   const visible = [];
   for (const o of obstacles) {
-    const z = 1.0 - (o.time - now) / OBS_SCROLL_TIME;
+    const z = 1.0 - (o.time - now) / effectiveScrollTime();
     if (z < -0.02 || z > 1.3) continue;
     if (o.judged && o.judgment !== 'MISS') continue;
     visible.push({ obs: o, z });
@@ -2700,9 +2708,36 @@ function drawSettingsScreen() {
     ctx.fillText('← → で調整', VX, volY + 68);
   }
 
-  // --- Avatar Drop Zone (item 1) ---
-  const avatarY = 320;
-  const isAvatar = settingsSelection === 1;
+  // --- Scroll Speed (item 1) ---
+  const spdY = 280;
+  const isSpd = settingsSelection === 1;
+  ctx.fillStyle = isSpd ? '#00ffcc' : 'rgba(150,200,255,0.6)';
+  ctx.font = isSpd ? 'bold 22px sans-serif' : '20px sans-serif';
+  ctx.fillText('⚡ スクロール速度', VX, spdY);
+
+  // Speed bar
+  const sBarW = 200, sBarH = 12;
+  const sBarX = VX - sBarW / 2, sBarY = spdY + 20;
+  const spdFrac = (scrollSpeedMult - 0.5) / 2.5; // 0.5→3.0 mapped to 0→1
+  ctx.fillStyle = 'rgba(40,40,80,0.7)';
+  ctx.fillRect(sBarX, sBarY, sBarW, sBarH);
+  ctx.fillStyle = isSpd ? '#00ddcc' : 'rgba(0,180,160,0.5)';
+  ctx.fillRect(sBarX, sBarY, sBarW * spdFrac, sBarH);
+  ctx.strokeStyle = isSpd ? '#00ffcc' : 'rgba(100,150,200,0.4)';
+  ctx.lineWidth = isSpd ? 2 : 1;
+  ctx.strokeRect(sBarX, sBarY, sBarW, sBarH);
+  ctx.fillStyle = '#fff';
+  ctx.font = '14px sans-serif';
+  ctx.fillText(scrollSpeedMult.toFixed(1) + 'x', VX, spdY + 50);
+  if (isSpd) {
+    ctx.fillStyle = 'rgba(0,255,200,0.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('← → で調整（速い＝間隔が広い）', VX, spdY + 68);
+  }
+
+  // --- Avatar Drop Zone (item 2) ---
+  const avatarY = 380;
+  const isAvatar = settingsSelection === 2;
   ctx.fillStyle = isAvatar ? '#ff88cc' : 'rgba(200,150,255,0.6)';
   ctx.font = isAvatar ? 'bold 22px sans-serif' : '20px sans-serif';
   ctx.fillText('🎨 アバター変更', VX, avatarY);
@@ -2771,9 +2806,9 @@ function drawSettingsScreen() {
     ctx.fillText(avatarLoadingMsg, VX, statusY + 30);
   }
 
-  // --- Reset Avatar (item 2) ---
-  const resetY = 570;
-  const isReset = settingsSelection === 2;
+  // --- Reset Avatar (item 3) ---
+  const resetY = 620;
+  const isReset = settingsSelection === 3;
   if (isReset) {
     ctx.shadowColor = '#ff4444';
     ctx.shadowBlur = 10;
@@ -2788,9 +2823,9 @@ function drawSettingsScreen() {
     ctx.fillText('スペースで初期化', VX, resetY + 22);
   }
 
-  // --- Back (item 3) ---
-  const backY = 650;
-  const isBack = settingsSelection === 3;
+  // --- Back (item 4) ---
+  const backY = 690;
+  const isBack = settingsSelection === 4;
   if (isBack) {
     ctx.shadowColor = '#ffee00';
     ctx.shadowBlur = 10;
