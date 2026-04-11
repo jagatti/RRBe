@@ -921,7 +921,7 @@ let keyFlash = { ArrowLeft: 0, ArrowRight: 0, ArrowDown: 0, ArrowUp: 0 };
 
 // Rhythm ball flash state (for hit feedback)
 let rhythmBallFlashes = [];  // { time, judgment, timer }
-const RHYTHM_BALL_RADIUS = 8;
+const RHYTHM_BALL_RADIUS = 12;
 const RHYTHM_BALL_TRAVEL = 1.0; // time window (seconds) for ball visibility and travel to center
 
 // ============================================================
@@ -1703,7 +1703,7 @@ function drawPylon(x, y, scale, color, isLeft) {
 
 function drawArch(x, y, scale, color) {
   // Arch / gate shape — tall narrow ∩ shape: very tall posts with narrow rounded top
-  const w = 50 * scale;      // narrower width (half-width of opening)
+  const w = 70 * scale;      // moderate width (half-width of opening)
   const h = 190 * scale;     // much taller total height
   const postW = 14 * scale;
   const postH = h * 0.78;    // very tall vertical posts (78% of height)
