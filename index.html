@@ -44,6 +44,7 @@ const PERSP_POW = 1.5;
 const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
 let scrollSpeedMult = 1.2; // user-adjustable: 0.5x (slow) – 2.0x (fast), default 1.2
 function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
+const CHART_START_OFFSET = 3.0; // seconds of song intro before obstacles begin (countdown period)
 
 // Obstacle visibility
 const OBS_VIS_CUTOFF = 0.10;  // z value below which obstacles are hidden (further = smaller number)
@@ -518,8 +519,8 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     ampMedian = sorted[Math.floor(sorted.length * AMP_PERCENTILE)] || 0.3;
   }
 
-  // Skip first 3s (intro plays during countdown), stop 2s before end
-  const startT = 3.0;
+  // Skip first CHART_START_OFFSET seconds (intro plays during countdown), stop 2s before end
+  const startT = CHART_START_OFFSET;
   const endT = duration - 2.0;
   let lastType = -1;
   let lastTime = -1;
@@ -1195,7 +1196,7 @@ function generateChart() {
       const time = (bar * 16 + step) * st;
 
       // Skip obstacles during countdown intro and too close to song end
-      if (time < 3.0) continue;
+      if (time < CHART_START_OFFSET) continue;
       if (time >= SONG_DURATION - bt * 2) continue;
 
       // Check if this step has audible content (melody or drums)
