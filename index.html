@@ -176,7 +176,7 @@ let audioCtx = null, masterGain = null;
 let nextStepTime = 0, stepCount = 0, beatCount = 0;
 let melodyPos = 0;
 let audioStarted = false;
-let gameStartTime = 0;
+let gameStartTime = -1;
 let gameVolume = 0.50; // 0.0 – 1.0, default 50%
 
 // Custom MP3 song state
@@ -225,7 +225,7 @@ function startCustomAudio() {
   customSourceNode = audioCtx.createBufferSource();
   customSourceNode.buffer = customAudioBuffer;
   customSourceNode.connect(masterGain);
-  customSourceNode.start(gameStartTime > 0 ? gameStartTime : audioCtx.currentTime + READY_GO_DUR);
+  customSourceNode.start(gameStartTime >= 0 ? gameStartTime : audioCtx.currentTime + READY_GO_DUR);
 }
 
 // ============================================================
@@ -999,7 +999,7 @@ canvas.addEventListener('drop', (e) => {
 // TIMING / JUDGMENT
 // ============================================================
 function musicTime() {
-  if (!audioCtx) return 0;
+  if (!audioCtx || gameStartTime < 0) return 0;
   return audioCtx.currentTime - gameStartTime;
 }
 

@@ -81,11 +81,11 @@ obstacle reaches the **judgment zone** near the character:
 
 | Judgment | Timing Window | Score | Combo |
 |----------|--------------|-------|-------|
-| **PERFECT** | ±45 ms | 100 pts | ✅ continues |
-| **GREAT** | ±90 ms | 80 pts | ✅ continues |
-| **GOOD** | ±140 ms | 50 pts | ✅ continues |
-| **BAD** | ±195 ms | 20 pts | ❌ resets |
-| **MISS** | >240 ms | 0 pts | ❌ resets |
+| **PERFECT** | ±55 ms | 100 pts | ✅ continues |
+| **GREAT** | ±105 ms | 80 pts | ✅ continues |
+| **GOOD** | ±155 ms | 50 pts | ✅ continues |
+| **BAD** | ±210 ms | 20 pts | ❌ resets |
+| **MISS** | >260 ms | 0 pts | ❌ resets |
 
 ### Scoring
 - Base score × **combo multiplier** (`floor(combo ÷ 10 + 1)`)
