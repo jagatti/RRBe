@@ -518,8 +518,8 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     ampMedian = sorted[Math.floor(sorted.length * AMP_PERCENTILE)] || 0.3;
   }
 
-  // Skip first 1.5s (intro), stop 2s before end
-  const startT = 1.5;
+  // Skip first 3s (intro plays during countdown), stop 2s before end
+  const startT = 3.0;
   const endT = duration - 2.0;
   let lastType = -1;
   let lastTime = -1;
@@ -1194,7 +1194,8 @@ function generateChart() {
     for (const step of steps) {
       const time = (bar * 16 + step) * st;
 
-      // Skip if too close to song end
+      // Skip obstacles during countdown intro and too close to song end
+      if (time < 3.0) continue;
       if (time >= SONG_DURATION - bt * 2) continue;
 
       // Check if this step has audible content (melody or drums)
@@ -1577,7 +1578,9 @@ function update(deltaT) {
 
   // Goal line: start showing when near the end of the song
   const lastObsTime = obstacles.length > 0 ? obstacles[obstacles.length - 1].time : SONG_DURATION;
-  const goalAppearTime = lastObsTime - effectiveScrollTime() * 0.5;
+  // For custom songs, goal is based on song duration (wait for song to finish)
+  const goalTime = isCustomSong ? Math.max(lastObsTime, SONG_DURATION - 2.0) : lastObsTime;
+  const goalAppearTime = goalTime - effectiveScrollTime() * 0.5;
   if (now >= goalAppearTime) {
     // goalLineZ goes from 0 (horizon) to 1 (judgment line)
     goalLineZ = Math.min(1.3, (now - goalAppearTime) / effectiveScrollTime());
@@ -1586,7 +1589,9 @@ function update(deltaT) {
   }
 
   const allDone = obstacles.length > 0 && obstacles.every(o => o.judged);
-  if (allDone && now > lastObsTime + 1.5) {
+  // For custom songs, wait until the actual song file finishes playing
+  const endTime = isCustomSong ? Math.max(lastObsTime + 1.5, SONG_DURATION) : lastObsTime + 1.5;
+  if (allDone && now >= endTime) {
     stopCustomAudio();
     gameState = 'RESULT';
   }
@@ -3229,6 +3234,7 @@ function draw() {
 
   if (gameState === 'READY_GO') {
     drawTrack();
+    drawObstacles();
     drawJudgeZone();
     drawCharacter();
     drawReadyGo();
@@ -3276,7 +3282,7 @@ function resetGame() {
 
   if (audioCtx) {
     stepCount = 0; beatCount = 0; melodyPos = 0;
-    gameStartTime = audioCtx.currentTime + READY_GO_DUR;
+    gameStartTime = audioCtx.currentTime; // song starts immediately (plays during READY_GO countdown)
     nextStepTime = gameStartTime;
   }
 
