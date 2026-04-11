@@ -1484,14 +1484,6 @@ function drawJudgeZone() {
   ctx.lineTo(VX + s.hw, y);
   ctx.stroke();
 
-  // Center "judgment" indicator - a pulsing circle at center
-  ctx.shadowColor = '#00ffcc';
-  ctx.shadowBlur = 15 * pulse;
-  ctx.strokeStyle = `rgba(0,255,200,${0.4 * pulse})`;
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.arc(VX, y, 28, 0, Math.PI * 2);
-  ctx.stroke();
   ctx.restore();
 }
 
@@ -1500,9 +1492,11 @@ function drawJudgeZone() {
 // ============================================================
 function drawRhythmBalls() {
   const now = musicTime();
-  const s = zToScreen(1.0);
-  const targetY = s.y;  // judgment zone Y
   const r = RHYTHM_BALL_RADIUS;
+
+  // Target position: above character head, near arch apex at perfect timing
+  const targetX = VX;
+  const targetY = ROAD_BOTTOM - 175;  // above character head, near arch top
 
   ctx.save();
 
@@ -1512,17 +1506,20 @@ function drawRhythmBalls() {
     const timeDiff = o.time - now;
     if (timeDiff < 0 || timeDiff > RHYTHM_BALL_TRAVEL) continue;
 
-    // Progress: 0 = at edge, 1 = at center
+    // Progress: 0 = at edge, 1 = at target
     const progress = 1 - (timeDiff / RHYTHM_BALL_TRAVEL);
-
-    // Balls come from both left and right edges toward center
-    const leftX = -r + (VX + r) * progress;
-    const rightX = W + r - (W + r - VX) * progress;
 
     // Easing for smooth deceleration
     const eased = 1 - Math.pow(1 - progress, 2);
-    const leftXE = -r + (VX + r) * eased;
-    const rightXE = W + r - (W + r - VX) * eased;
+
+    // Balls come from left and right sides, converging above character
+    const startY = targetY - 40;  // start slightly higher
+    const leftStartX = VX - 300;
+    const rightStartX = VX + 300;
+
+    const leftX = leftStartX + (targetX - leftStartX) * eased;
+    const rightX = rightStartX + (targetX - rightStartX) * eased;
+    const ballY = startY + (targetY - startY) * eased;
 
     // Alpha: fade in, full near target
     const alpha = Math.min(1, progress * 2.5);
@@ -1535,12 +1532,12 @@ function drawRhythmBalls() {
 
     // Left ball
     ctx.beginPath();
-    ctx.arc(leftXE, targetY, r, 0, Math.PI * 2);
+    ctx.arc(leftX, ballY, r, 0, Math.PI * 2);
     ctx.fill();
 
     // Right ball
     ctx.beginPath();
-    ctx.arc(rightXE, targetY, r, 0, Math.PI * 2);
+    ctx.arc(rightX, ballY, r, 0, Math.PI * 2);
     ctx.fill();
 
     // Small trail effect
@@ -1549,10 +1546,10 @@ function drawRhythmBalls() {
       ctx.shadowBlur = 0;
       const trailOff = (1 - eased) * 30;
       ctx.beginPath();
-      ctx.arc(leftXE - trailOff, targetY, r * 0.6, 0, Math.PI * 2);
+      ctx.arc(leftX - trailOff, ballY, r * 0.6, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(rightXE + trailOff, targetY, r * 0.6, 0, Math.PI * 2);
+      ctx.arc(rightX + trailOff, ballY, r * 0.6, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -1593,9 +1590,9 @@ function drawRhythmBalls() {
     ctx.shadowColor = glowCol;
     ctx.shadowBlur = 20 * t;
 
-    // Flash at center (both balls merged)
+    // Flash above character (where balls converge)
     ctx.beginPath();
-    ctx.arc(VX, targetY, flashR, 0, Math.PI * 2);
+    ctx.arc(targetX, targetY, flashR, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -1678,8 +1675,8 @@ function drawObstacles() {
 }
 
 function drawPylon(x, y, scale, color, isLeft) {
-  // Traffic cone / pylon shape
-  const w = 28 * scale;
+  // Traffic cone / pylon shape — slim
+  const w = 18 * scale;
   const h = 70 * scale;
 
   ctx.save();
@@ -1708,10 +1705,10 @@ function drawPylon(x, y, scale, color, isLeft) {
 }
 
 function drawArch(x, y, scale, color) {
-  // Arch / gate shape — tall narrow ∩ shape: very tall posts with narrow rounded top
-  const w = 50 * scale;      // narrower width (half-width of opening)
-  const h = 190 * scale;     // much taller total height
-  const postW = 14 * scale;
+  // Arch / gate shape — tall ∩ shape with wider opening so obstacles behind are visible
+  const w = 80 * scale;      // wider opening (half-width)
+  const h = 190 * scale;     // tall total height
+  const postW = 12 * scale;
   const postH = h * 0.78;    // very tall vertical posts (78% of height)
   const archTop = y - postH; // where posts end and curve begins
 
