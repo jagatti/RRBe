@@ -1672,8 +1672,8 @@ function drawObstacles() {
 }
 
 function drawPylon(x, y, scale, color, isLeft) {
-  // Traffic cone / pylon shape — slim
-  const w = 14 * scale;
+  // Traffic cone / pylon shape
+  const w = 28 * scale;
   const h = 70 * scale;
 
   ctx.save();
@@ -1702,10 +1702,10 @@ function drawPylon(x, y, scale, color, isLeft) {
 }
 
 function drawArch(x, y, scale, color) {
-  // Arch / gate shape — tall ∩ shape with wide opening so obstacles behind are visible
-  const w = 110 * scale;     // wide opening (half-width) for clear view of next obstacle
-  const h = 190 * scale;     // tall total height
-  const postW = 12 * scale;
+  // Arch / gate shape — tall narrow ∩ shape: very tall posts with narrow rounded top
+  const w = 50 * scale;      // narrower width (half-width of opening)
+  const h = 190 * scale;     // much taller total height
+  const postW = 14 * scale;
   const postH = h * 0.78;    // very tall vertical posts (78% of height)
   const archTop = y - postH; // where posts end and curve begins
 
