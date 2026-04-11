@@ -44,11 +44,11 @@ const PERSP_POW = 1.5;
 const OBS_SCROLL_TIME = 1.2; // seconds from spawn to judgment line (closer appearance)
 
 // Timing windows (seconds)
-const T_PERFECT = 0.045;
-const T_GREAT   = 0.090;
-const T_GOOD    = 0.140;
-const T_BAD     = 0.195;
-const T_MISS    = 0.240;
+const T_PERFECT = 0.055;
+const T_GREAT   = 0.105;
+const T_GOOD    = 0.155;
+const T_BAD     = 0.210;
+const T_MISS    = 0.260;
 
 // Obstacle types and corresponding correct keys
 // PYLON_R: pylon on right side -> press LEFT to dodge left
@@ -225,7 +225,7 @@ function startCustomAudio() {
   customSourceNode = audioCtx.createBufferSource();
   customSourceNode.buffer = customAudioBuffer;
   customSourceNode.connect(masterGain);
-  customSourceNode.start(audioCtx.currentTime + READY_GO_DUR);
+  customSourceNode.start(gameStartTime > 0 ? gameStartTime : audioCtx.currentTime + READY_GO_DUR);
 }
 
 // ============================================================
@@ -3099,8 +3099,8 @@ function resetGame() {
 
   if (audioCtx) {
     stepCount = 0; beatCount = 0; melodyPos = 0;
-    nextStepTime = audioCtx.currentTime + READY_GO_DUR + 0.05;
     gameStartTime = audioCtx.currentTime + READY_GO_DUR;
+    nextStepTime = gameStartTime;
   }
 
   // Start MP3 playback for custom songs
