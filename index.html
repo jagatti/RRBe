@@ -198,6 +198,7 @@ let customDifficulty = 'NORMAL'; // 'NORMAL' or 'HARD' for custom MP3 songs
 // Avatar customization state — Minecraft skin texture
 let avatarCustom = null;  // null = default, or { skinCanvas: OffscreenCanvas (64x64 Minecraft skin) }
 let skinTexture = null;   // HTMLCanvasElement holding the full 64x64 skin for drawing
+let skinHasHat = false;   // cached: whether hat overlay layer has visible pixels
 let avatarDropHover = false;
 let avatarLoadingMsg = '';
 
@@ -642,6 +643,7 @@ function handleAvatarDrop(file) {
 
       skinTexture = skinCanvas;
       avatarCustom = { skinCanvas: skinCanvas };
+      skinHasHat = checkSkinHasHat(skinCanvas);
 
       avatarLoadingMsg = '✓ マイクラスキンを適用しました！';
       setTimeout(() => { avatarLoadingMsg = ''; }, 3000);
@@ -660,6 +662,15 @@ let defaultSkinCanvas = null;
 function getDefaultSkin() {
   if (!defaultSkinCanvas) defaultSkinCanvas = buildDefaultSkin();
   return defaultSkinCanvas;
+}
+// Check if skin hat overlay (40,8 → 48,16) has visible pixels
+function checkSkinHasHat(skinCanvas) {
+  const sCtx = skinCanvas.getContext('2d');
+  const hatData = sCtx.getImageData(40, 8, 8, 8).data;
+  for (let i = 3; i < hatData.length; i += 4) {
+    if (hatData[i] > 10) return true;
+  }
+  return false;
 }
 // Get the active skin canvas (custom or default)
 function getActiveSkin() {
@@ -1186,6 +1197,7 @@ window.addEventListener('keydown', (e) => {
       // Reset avatar
       avatarCustom = null;
       skinTexture = null;
+      skinHasHat = false;
       avatarLoadingMsg = 'スキンを初期化しました！';
       setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
     } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 4) {
@@ -2118,14 +2130,7 @@ function drawCharacter() {
   drawPart(8, 8, 8, 8, -headW/2, headTopY, headW, headH);
 
   // --- HEAD OVERLAY (hat layer) --- skin(40,8, 8,8)
-  // Check if overlay has any non-transparent pixels
-  const hatCtx = skin.getContext('2d');
-  const hatData = hatCtx.getImageData(40, 8, 8, 8).data;
-  let hasHat = false;
-  for (let i = 3; i < hatData.length; i += 4) {
-    if (hatData[i] > 10) { hasHat = true; break; }
-  }
-  if (hasHat) {
+  if (skinHasHat) {
     drawPart(40, 8, 8, 8, -headW/2 - 1, headTopY - 1, headW + 2, headH + 2);
   }
 
