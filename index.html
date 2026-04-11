@@ -332,6 +332,25 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     return (seed & 0x7fffffff) / 0x7fffffff;
   }
 
+  // Analyze beat density to detect calm vs intense sections
+  // Divide song into windows and count beats per window
+  const windowSize = beatS * 8; // 2-bar windows
+  const beatDensity = [];
+  const maxT = duration;
+  for (let w = 0; w < maxT; w += windowSize) {
+    const count = beats.filter(t => t >= w && t < w + windowSize).length;
+    beatDensity.push({ start: w, end: w + windowSize, count });
+  }
+  // Find median density for calm/intense threshold
+  const sortedCounts = beatDensity.map(d => d.count).sort((a, b) => a - b);
+  const medianDensity = sortedCounts[Math.floor(sortedCounts.length / 2)] || 1;
+
+  function isCalmAt(t) {
+    const idx = Math.floor(t / windowSize);
+    if (idx >= beatDensity.length) return true;
+    return beatDensity[idx].count < medianDensity * 0.7;
+  }
+
   // Skip first 1.5s (intro), stop 2s before end
   const startT = 1.5;
   const endT = duration - 2.0;
@@ -344,15 +363,26 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     if (t < startT || t > endT) continue;
     if (t - lastTime < minGap) continue;
 
-    // Pick type based on random + musical heuristics
     const r = rand();
+    const calm = isCalmAt(t);
     let typeIdx;
-    if (r < 0.18) typeIdx = 0;      // PYLON_R
-    else if (r < 0.36) typeIdx = 1;  // PYLON_L
-    else if (r < 0.50) typeIdx = 2;  // ARCH
-    else if (r < 0.64) typeIdx = 3;  // BLOCK
-    else if (r < 0.82) typeIdx = 4;  // STAR_R
-    else typeIdx = 5;                 // STAR_L
+
+    if (calm) {
+      // Calm sections: stars ~60%
+      if (r < 0.30) typeIdx = 4;       // STAR_R
+      else if (r < 0.60) typeIdx = 5;  // STAR_L
+      else if (r < 0.75) typeIdx = 0;  // PYLON_R
+      else if (r < 0.90) typeIdx = 1;  // PYLON_L
+      else typeIdx = r < 0.95 ? 2 : 3; // ARCH or BLOCK
+    } else {
+      // Intense sections: action obstacles, very few stars (~5%)
+      if (r < 0.22) typeIdx = 0;       // PYLON_R
+      else if (r < 0.44) typeIdx = 1;  // PYLON_L
+      else if (r < 0.62) typeIdx = 2;  // ARCH
+      else if (r < 0.80) typeIdx = 3;  // BLOCK
+      else if (r < 0.90) typeIdx = 4;  // STAR_R (rare)
+      else typeIdx = 5;                // STAR_L (rare)
+    }
 
     // Avoid same consecutive type
     if (typeIdx === lastType) {
@@ -380,8 +410,8 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       if (gap > sixteenthS * 2.5) {
         const midT = obstacles[i].time + gap * 0.5;
         if (midT > startT && midT < endT) {
-          let typeIdx = Math.floor(rand() * 6);
-          if (OBS_TYPES[typeIdx] === obstacles[i].type) typeIdx = (typeIdx + 2) % 6;
+          let typeIdx = Math.floor(rand() * 4); // only action types (0-3), no stars
+          if (OBS_TYPES[typeIdx] === obstacles[i].type) typeIdx = (typeIdx + 1) % 4;
           extraObs.push({
             time: midT,
             type: OBS_TYPES[typeIdx],
@@ -723,34 +753,70 @@ function generateChart() {
   const expert16thB = [0, 1, 4, 6, 7, 8, 10, 12, 13, 14, 15]; // dense 16th runs
   const expert16thC = [0, 2, 4, 5, 6, 8, 10, 12, 13, 14];    // syncopated 16ths
 
-  // Type selection weighted by musical position (uses actual per-song drum data)
-  function pickType(step, r) {
+  // Determine musical intensity per bar based on drum density
+  // More active drums = higher intensity (chorus/climax), fewer = calm section
+  function barIntensity(bar) {
+    // Count how many distinct drum events per bar from song data
+    const totalDrums = sd.kick.size + sd.snare.size + sd.ohihat.size;
+    // Structural intensity: intro/outro are calm, middle sections are intense
+    const progress = bar / SONG_BARS; // 0→1
+    let structural;
+    if (progress < 0.15) structural = 0.2;       // intro — calm
+    else if (progress < 0.30) structural = 0.5;   // build-up
+    else if (progress < 0.55) structural = 1.0;   // chorus/peak — intense
+    else if (progress < 0.65) structural = 0.4;   // breakdown — calm
+    else if (progress < 0.85) structural = 1.0;   // second chorus — intense
+    else structural = 0.3;                         // outro — calm
+    // Rest bars (bar % 8 === 0) are explicitly calm
+    if (bar > 4 && bar % 8 === 0 && bar < SONG_BARS - 4) structural = 0.15;
+    // Drum density factor: songs with fewer drums are inherently calmer
+    const densityFactor = Math.min(totalDrums / 16, 1.0); // max 16 steps
+    return structural * (0.5 + 0.5 * densityFactor);
+  }
+
+  // Type selection weighted by musical position and intensity
+  // calm=true → favor stars; calm=false → favor action obstacles
+  function pickType(step, r, isCalm) {
     const isKick = sd.kick.has(step);
     const isSnare = sd.snare.has(step);
     const isHihat = sd.ohihat.has(step);
 
-    if (isKick && !isSnare) {
-      // Kick beat: jump or dodge
-      if (r < 0.3) return 3;      // BLOCK (jump)
-      else if (r < 0.55) return 0; // PYLON_R
-      else if (r < 0.8) return 1;  // PYLON_L
-      else return r < 0.9 ? 4 : 5; // STAR
-    } else if (isSnare) {
-      // Snare hit: duck or collect
-      if (r < 0.35) return 2;      // ARCH (duck)
-      else if (r < 0.55) return 3; // BLOCK (jump)
-      else if (r < 0.75) return 4; // STAR_R
-      else return r < 0.9 ? 5 : 0; // STAR_L or PYLON
-    } else if (isHihat) {
-      // Hihat/offbeat: stars and varied
-      if (r < 0.25) return 4;      // STAR_R
-      else if (r < 0.5) return 5;  // STAR_L
-      else if (r < 0.65) return 0; // PYLON_R
-      else if (r < 0.8) return 1;  // PYLON_L
-      else return r < 0.9 ? 2 : 3; // ARCH or BLOCK
+    if (isCalm) {
+      // Calm sections: stars ~60% here (but overall ~20% since calm bars are minority)
+      if (r < 0.30) return 4;      // STAR_R
+      else if (r < 0.60) return 5;  // STAR_L
+      else if (r < 0.75) return 0;  // PYLON_R
+      else if (r < 0.90) return 1;  // PYLON_L
+      else return r < 0.95 ? 2 : 3; // ARCH or BLOCK
     }
-    // Default
-    return Math.floor(r * 6);
+
+    // Intense sections: mostly action obstacles, very few stars
+    if (isKick && !isSnare) {
+      // Kick beat: jump or dodge — no stars
+      if (r < 0.30) return 3;      // BLOCK (jump)
+      else if (r < 0.55) return 0; // PYLON_R
+      else if (r < 0.80) return 1; // PYLON_L
+      else return 2;               // ARCH (duck)
+    } else if (isSnare) {
+      // Snare hit: duck or jump — no stars
+      if (r < 0.35) return 2;      // ARCH (duck)
+      else if (r < 0.60) return 3; // BLOCK (jump)
+      else if (r < 0.80) return 0; // PYLON_R
+      else return 1;               // PYLON_L
+    } else if (isHihat) {
+      // Hihat/offbeat: dodge variety — rare stars (~5%)
+      if (r < 0.25) return 0;      // PYLON_R
+      else if (r < 0.50) return 1; // PYLON_L
+      else if (r < 0.70) return 2; // ARCH
+      else if (r < 0.85) return 3; // BLOCK
+      else if (r < 0.925) return 4; // STAR_R (rare)
+      else return 5;               // STAR_L (rare)
+    }
+    // Default: no stars in intense sections
+    if (r < 0.25) return 0;
+    else if (r < 0.50) return 1;
+    else if (r < 0.75) return 2;
+    else return 3;
   }
 
   // Avoid placing same consecutive obstacle type
@@ -760,7 +826,11 @@ function generateChart() {
     // Skip intro bars
     if (bar < 2) continue;
 
-    // Select pattern density based on song progression
+    // Determine intensity for this bar
+    const intensity = barIntensity(bar);
+    const isCalm = intensity < 0.4; // calm threshold
+
+    // Select pattern density based on song progression and intensity
     let steps;
     const isChaos = selectedSong === 3; // Chaos Protocol — 16th-note expert
     if (isChaos) {
@@ -772,10 +842,16 @@ function generateChart() {
       else if (bar < 40) steps = expert16thB;
       else               steps = expert16thC;
     } else {
-      if (bar < 10)      steps = easySteps;
-      else if (bar < 22) steps = normalSteps;
-      else if (bar < 38) steps = hardSteps;
-      else               steps = expertSteps;
+      // Use intensity to shift difficulty: intense bars → denser patterns
+      if (intensity >= 0.8) {
+        steps = expertSteps;   // chorus/peak → hardest
+      } else if (intensity >= 0.5) {
+        steps = hardSteps;     // moderate intensity
+      } else if (intensity >= 0.3) {
+        steps = normalSteps;   // calmer sections
+      } else {
+        steps = easySteps;     // quiet/rest sections
+      }
     }
 
     // Add musical variation: occasional rest bars for breathing room
@@ -790,7 +866,7 @@ function generateChart() {
       // Skip if too close to song end
       if (time >= SONG_DURATION - bt * 2) continue;
 
-      let typeIdx = pickType(step, rand());
+      let typeIdx = pickType(step, rand(), isCalm);
 
       // Avoid 3+ consecutive same types
       if (typeIdx === lastType) {
