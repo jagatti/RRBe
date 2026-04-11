@@ -42,7 +42,7 @@ const PERSP_POW = 1.5;
 
 // Obstacle scroll
 const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
-let scrollSpeedMult = 1.2; // user-adjustable: 0.5x(slow) – 2.0x(fast), default 1.2
+let scrollSpeedMult = 1.2; // user-adjustable: 0.5x (slow) – 2.0x (fast), default 1.2
 function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
 
 // Obstacle visibility
@@ -408,6 +408,13 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   const beatS = 60 / bpm;
   difficulty = difficulty || 'NORMAL';
 
+  // Waveform analysis thresholds
+  const SILENCE_AMP_THRESHOLD = 0.05;  // below this = nearly silent section
+  const QUIET_BEAT_AMP = 0.08;         // minimum amplitude for obstacle placement
+  const VOCAL_SONG_THRESHOLD = 0.08;   // overall vocal score >8% = vocal song
+  const VOCAL_SECTION_THRESHOLD = 0.15;// per-section vocal likelihood threshold
+  const AMP_PERCENTILE = 0.35;         // use 35th percentile (favor prominent peaks over median)
+
   // Seeded random
   let seed = bpm * 1000 + Math.floor(duration) * 7;
   function rand() {
@@ -447,7 +454,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   function hasVocalsAt(t) {
     if (!vocalLikelihood || vocalLikelihood.length === 0) return false;
     const idx = Math.floor(t / vocalWindowSec);
-    if (idx >= 0 && idx < vocalLikelihood.length) return vocalLikelihood[idx] > 0.15;
+    if (idx >= 0 && idx < vocalLikelihood.length) return vocalLikelihood[idx] > VOCAL_SECTION_THRESHOLD;
     return false;
   }
 
@@ -457,7 +464,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     for (let i = 0; i < vocalLikelihood.length; i++) totalVocalScore += vocalLikelihood[i];
     totalVocalScore /= Math.max(1, vocalLikelihood.length);
   }
-  const isVocalSong = totalVocalScore > 0.08; // >8% vocal sections = vocal song
+  const isVocalSong = totalVocalScore > VOCAL_SONG_THRESHOLD;
 
   // Analyze beat density to detect calm vs intense sections
   // Divide song into windows and count beats per window
@@ -489,7 +496,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       const wStart = idx * windowSize;
       const wEnd = wStart + windowSize;
       const avgAmp = getAvgAmplitude(wStart, wEnd);
-      if (avgAmp < 0.05) return true; // nearly silent waveform
+      if (avgAmp < SILENCE_AMP_THRESHOLD) return true; // nearly silent waveform
     }
     return false;
   }
@@ -508,7 +515,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   let ampMedian = 0.5;
   if (hasAmpData && onsetAmplitudes && onsetAmplitudes.length > 0) {
     const sorted = [...onsetAmplitudes].sort((a, b) => a - b);
-    ampMedian = sorted[Math.floor(sorted.length * 0.35)] || 0.3;
+    ampMedian = sorted[Math.floor(sorted.length * AMP_PERCENTILE)] || 0.3;
   }
 
   // Skip first 1.5s (intro), stop 2s before end
@@ -536,7 +543,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       if (isVocalSection) {
         // Vocal section: follow vocal melody — accept most beats since beat detection
         // already captured melody onsets; skip only very weak beats
-        if (beatAmp < ampMedian * 0.3 && localAmp < 0.08) continue;
+        if (beatAmp < ampMedian * 0.3 && localAmp < QUIET_BEAT_AMP) continue;
       } else if (isVocalSong && !isVocalSection) {
         // Instrumental interlude in a vocal song: emphasize waveform peaks more
         if (beatAmp < ampMedian * 0.6 && rand() < 0.5) continue;
@@ -599,7 +606,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
         if (midT > startT && midT < endT && !isSilentAt(midT)) {
           // Also check waveform amplitude for extra obstacles
           const midAmp = hasAmpData ? getAmplitudeAt(midT) : 0.5;
-          if (midAmp < 0.08) continue; // skip if waveform is too quiet
+          if (midAmp < QUIET_BEAT_AMP) continue; // skip if waveform is too quiet
           let typeIdx = Math.floor(rand() * 4); // only action types (0-3), no stars
           if (OBS_TYPES[typeIdx] === obstacles[i].type) typeIdx = (typeIdx + 1) % 4;
           extraObs.push({
