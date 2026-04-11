@@ -33,9 +33,9 @@ let STEP_S = BEAT_S / 4;
 let SONG_BARS = 48;
 let SONG_DURATION = SONG_BARS * 4 * BEAT_S;
 
-// Perspective — lowered camera (higher VY) so road looks more head-on
+// Perspective — low camera so obstacles appear to rush toward player
 const VX = W / 2;           // vanishing point X
-const VY = 216;              // vanishing point Y (lowered camera)
+const VY = 180;              // vanishing point Y (lower = more "coming at you" feel)
 const ROAD_BOTTOM = 672;     // road bottom edge (near player)
 const ROAD_HW = 384;         // half-width of road at bottom
 const PERSP_POW = 1.5;
@@ -1543,13 +1543,13 @@ function drawObstacles() {
   visible.sort((a, b) => a.z - b.z);
 
   for (const { obs: o, z } of visible) {
-    if (z < 0.25) continue;
+    if (z < 0.15) continue;
 
     // Use road perspective mapping so obstacles move WITH the road surface
     const s = zToScreen(z);
     const y = s.y;
-    // Linear scale from z: small(0.45) → medium(0.70) — gentle size progression, starts further back
-    const scale = 0.45 + (Math.min(1.0, z) - 0.25) / 0.75 * 0.25;
+    // Linear scale from z: small(0.40) → medium(0.70) — gentle size progression, visible from further back
+    const scale = 0.40 + (Math.min(1.0, z) - 0.15) / 0.85 * 0.30;
 
     // Alpha: fade in gradually from far, dim if missed
     let alpha = Math.min(1, s.t * 2.5);
