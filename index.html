@@ -43,8 +43,8 @@ const PERSP_POW = 1.5;
 // Obstacle scroll
 const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
 const SCROLL_SPEED_MIN = 0.5;
-const SCROLL_SPEED_MAX = 2.0;
-const SCROLL_SPEED_CLAMP = 0.8; // minimum divisor to prevent extreme gap compression at low speeds
+const SCROLL_SPEED_MAX = 2.0; // capped at 2.0x — speeds above this are humanly unreadable
+const SCROLL_SPEED_CLAMP = 0.8; // minimum multiplier floor to prevent overly tight spacing at low speeds
 let scrollSpeedMult = 1.2; // user-adjustable: 0.5x (slow) – 2.0x (fast), default 1.2
 function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
 const CHART_START_OFFSET = 0; // no offset: music and obstacles start together after GO
