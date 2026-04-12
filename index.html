@@ -43,9 +43,9 @@ const PERSP_POW = 1.5;
 // Obstacle scroll
 const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
 const SCROLL_SPEED_MIN = 0.5;
-const SCROLL_SPEED_MAX = 3.0;
+const SCROLL_SPEED_MAX = 2.0;
 const SCROLL_SPEED_CLAMP = 0.8; // minimum divisor to prevent extreme gap compression at low speeds
-let scrollSpeedMult = 1.2; // user-adjustable: 0.5x (slow) – 3.0x (fast), default 1.2
+let scrollSpeedMult = 1.2; // user-adjustable: 0.5x (slow) – 2.0x (fast), default 1.2
 function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
 const CHART_START_OFFSET = 0; // no offset: music and obstacles start together after GO
 
@@ -725,10 +725,10 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   let lastType = -1;
   let lastTime = -1;
   // Minimum gap based on difficulty, scaled by scroll speed
-  // Higher scroll speed = obstacles spread out more visually, so we can allow tighter timing
-  // Lower scroll speed = obstacles compressed, need wider minimum gap
+  // Higher scroll speed = wider minimum gap = more visual spacing between obstacles
+  // This ensures that increasing scroll speed makes obstacles more spread out and readable
   const baseMinGap = difficulty === 'HARD' ? beatS * 0.35 : beatS * 0.50;
-  const minGap = baseMinGap / Math.max(SCROLL_SPEED_CLAMP, scrollSpeedMult);
+  const minGap = baseMinGap * Math.max(1.0, scrollSpeedMult);
 
   for (let qi = 0; qi < quantizedBeats.length; qi++) {
     const qb = quantizedBeats[qi];
@@ -770,10 +770,11 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     let typeIdx;
 
     if (section === 'intro' || section === 'outro' || section === 'calm' || section === 'before_last_chorus') {
-      // Calm/intro/outro: stars more frequent
-      const starChance = (section === 'before_last_chorus') ? 0.50
+      // Calm/intro/outro: stars more frequent (reduced in HARD mode to keep ≤10% overall)
+      const baseStarChance = (section === 'before_last_chorus') ? 0.50
                        : (section === 'intro' || section === 'outro') ? 0.45
                        : 0.40;
+      const starChance = difficulty === 'HARD' ? Math.min(baseStarChance, 0.15) : baseStarChance;
       if (r < starChance / 2) typeIdx = 4;       // STAR_R
       else if (r < starChance) typeIdx = 5;       // STAR_L
       else if (r < starChance + 0.20) typeIdx = 0; // PYLON_R
@@ -787,31 +788,31 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
           if (r < 0.40) typeIdx = 3;       // BLOCK (jump!) — feels like rising
           else if (r < 0.60) typeIdx = 0;  // PYLON_R
           else if (r < 0.80) typeIdx = 1;  // PYLON_L
-          else if (r < 0.95) typeIdx = 2;  // ARCH
-          else typeIdx = r < 0.975 ? 4 : 5; // STAR
+          else typeIdx = 2;                // ARCH
         } else if (pitchDir < 0) {
           // Falling melody → duck (ARCH) or left dodge
           if (r < 0.40) typeIdx = 2;       // ARCH (duck!) — feels like descending
           else if (r < 0.60) typeIdx = 1;  // PYLON_L
           else if (r < 0.80) typeIdx = 0;  // PYLON_R
-          else if (r < 0.95) typeIdx = 3;  // BLOCK
-          else typeIdx = r < 0.975 ? 4 : 5; // STAR
+          else typeIdx = 3;                // BLOCK
         } else {
           // Neutral/sustained melody → side dodges for rhythmic flow
           if (r < 0.30) typeIdx = 0;       // PYLON_R
           else if (r < 0.60) typeIdx = 1;  // PYLON_L
           else if (r < 0.78) typeIdx = 2;  // ARCH
-          else if (r < 0.95) typeIdx = 3;  // BLOCK
-          else typeIdx = r < 0.975 ? 4 : 5; // STAR
+          else typeIdx = 3;                // BLOCK
         }
       } else {
         // Percussion-only beats: favor jumps/ducks for percussive impact
         if (r < 0.18) typeIdx = 0;       // PYLON_R
         else if (r < 0.36) typeIdx = 1;  // PYLON_L
         else if (r < 0.63) typeIdx = 3;  // BLOCK (jump!)
-        else if (r < 0.90) typeIdx = 2;  // ARCH (duck!)
-        else if (r < 0.95) typeIdx = 4;  // STAR_R
-        else typeIdx = 5;                // STAR_L
+        else typeIdx = 2;                // ARCH (duck!)
+      }
+
+      // In non-HARD mode, add small star chance in intense sections
+      if (difficulty !== 'HARD') {
+        if (r > 0.95) typeIdx = r < 0.975 ? 4 : 5; // ~5% STAR in intense sections
       }
     }
 
@@ -1489,8 +1490,8 @@ function generateChart() {
   obstacles.sort((a, b) => a.time - b.time);
 
   // Enforce minimum visual spacing between obstacles
-  // Higher scroll speed spreads obstacles out more, lower compresses them
-  const builtInMinGap = st * 1.5 / Math.max(SCROLL_SPEED_CLAMP, scrollSpeedMult);
+  // Higher scroll speed = wider gap = more visual spacing between obstacles
+  const builtInMinGap = st * 1.5 * Math.max(1.0, scrollSpeedMult);
   for (let i = obstacles.length - 1; i > 0; i--) {
     if (obstacles[i].time - obstacles[i - 1].time < builtInMinGap) {
       obstacles.splice(i, 1);
