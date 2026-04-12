@@ -42,7 +42,7 @@ const PERSP_POW = 1.5;
 
 // Obstacle scroll
 const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
-let scrollSpeedMult = 1.2; // user-adjustable: 0.5x (slow) – 2.0x (fast), default 1.2
+let scrollSpeedMult = 1.2; // user-adjustable: 0.5x (slow) – 3.0x (fast), default 1.2
 function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
 const CHART_START_OFFSET = 0; // no offset: music and obstacles start together after GO
 
@@ -352,8 +352,10 @@ function detectBeats(audioBuffer) {
     }
   }
 
-  // Store per-onset melody/percussion classification
+  // Store per-onset melody/percussion classification and pitch direction
   const onsetIsMelody = new Uint8Array(onsets.length);
+  // Pitch direction: +1 = rising, -1 = falling, 0 = neutral
+  const onsetPitchDir = new Int8Array(onsets.length);
   // Re-classify each onset
   for (let i = 0; i < onsets.length; i++) {
     const t = onsets[i];
@@ -363,9 +365,28 @@ function detectBeats(audioBuffer) {
       const lFlux = fluxLow[w];
       const hFlux = fluxHigh[w];
       onsetIsMelody[i] = (mFlux > lFlux * 1.2 && mFlux > hFlux * 0.8) ? 1 : 0;
+
+      // Detect pitch direction by comparing mid-band energy trend
+      // Look at energy change in a small window around this onset
+      const lookback = Math.min(w, 6);
+      const lookfwd = Math.min(numWindows - w - 1, 6);
+      if (lookback >= 2 && lookfwd >= 2) {
+        let prevMidE = 0, nextMidE = 0;
+        for (let j = w - lookback; j < w; j++) prevMidE += energyMid[j];
+        for (let j = w + 1; j <= w + lookfwd; j++) nextMidE += energyMid[j];
+        prevMidE /= lookback;
+        nextMidE /= lookfwd;
+        // Also compare high vs low band energy for pitch height
+        const highDominance = hFlux > lFlux * 1.5;
+        const lowDominance = lFlux > hFlux * 1.5;
+        if (nextMidE > prevMidE * 1.15 || highDominance) onsetPitchDir[i] = 1;   // rising
+        else if (prevMidE > nextMidE * 1.15 || lowDominance) onsetPitchDir[i] = -1; // falling
+        else onsetPitchDir[i] = 0; // neutral
+      }
     }
   }
   onsets._onsetIsMelody = onsetIsMelody;
+  onsets._onsetPitchDir = onsetPitchDir;
 
   // Store waveform amplitude data for chart generation
   // Compute RMS energy in larger windows (100ms) for amplitude envelope
@@ -558,6 +579,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   const ampSampleRate = beats._sampleRate;
   const onsetAmplitudes = beats._onsetAmplitudes;
   const onsetIsMelody = beats._onsetIsMelody;
+  const onsetPitchDir = beats._onsetPitchDir;
   const vocalLikelihood = beats._vocalLikelihood;
   const vocalWindowSec = beats._vocalWindowSec;
   const hasAmpData = ampEnvelope && ampEnvelope.length > 0;
@@ -611,7 +633,8 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
         _t: gridPos,
         _origIdx: bi,
         _amp: onsetAmplitudes ? (onsetAmplitudes[bi] || 0) : 0.5,
-        _isMelody: onsetIsMelody ? onsetIsMelody[bi] : 0
+        _isMelody: onsetIsMelody ? onsetIsMelody[bi] : 0,
+        _pitchDir: onsetPitchDir ? onsetPitchDir[bi] : 0
       });
     }
   }
@@ -698,8 +721,11 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   const endT = duration - 2.0;
   let lastType = -1;
   let lastTime = -1;
-  // Minimum gap based on difficulty (prevents overwhelming density)
-  const minGap = difficulty === 'HARD' ? beatS * 0.2 : beatS * 0.35;
+  // Minimum gap based on difficulty, scaled by scroll speed
+  // Higher scroll speed = obstacles spread out more visually, so we can allow tighter timing
+  // Lower scroll speed = obstacles compressed, need wider minimum gap
+  const baseMinGap = difficulty === 'HARD' ? beatS * 0.35 : beatS * 0.50;
+  const minGap = baseMinGap / Math.max(0.8, scrollSpeedMult);
 
   for (let qi = 0; qi < quantizedBeats.length; qi++) {
     const qb = quantizedBeats[qi];
@@ -711,7 +737,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     // Skip silent sections — no obstacles in silent parts
     if (isSilentAt(t)) continue;
 
-    // ---- Improved amplitude filtering using local context ----
+    // ---- Improved amplitude filtering: strongly favor melody onsets ----
     if (hasAmpData && onsetAmplitudes) {
       const beatAmp = qb._amp;
       const localAmp = getAmplitudeAt(t);
@@ -720,22 +746,24 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       const localThreshold = getLocalAmpThreshold(t);
 
       if (isMelodyOnset) {
-        // Melody onset: keep almost all — these are the most musically relevant
-        if (beatAmp < localThreshold * 0.2 && localAmp < QUIET_BEAT_AMP) continue;
+        // Melody onset: keep nearly all — these are the core musical moments
+        if (beatAmp < localThreshold * 0.15 && localAmp < QUIET_BEAT_AMP) continue;
       } else if (isVocalSection) {
-        // Vocal section: keep most beats, skip only very weak ones
+        // Vocal section: moderately prioritize
         if (beatAmp < localThreshold * 0.3 && localAmp < QUIET_BEAT_AMP) continue;
       } else if (isVocalSong && !isVocalSection) {
-        // Instrumental interlude in vocal song: moderate filtering
-        if (beatAmp < localThreshold * 0.5 && rand() < 0.4) continue;
+        // Instrumental interlude in vocal song: stronger filtering of non-melody beats
+        if (beatAmp < localThreshold * 0.6 && rand() < 0.5) continue;
       } else {
-        // Fully instrumental: filter by local amplitude context
-        if (beatAmp < localThreshold * 0.4 && rand() < 0.35) continue;
+        // Fully instrumental: filter weak percussion-only onsets more aggressively
+        if (beatAmp < localThreshold * 0.5 && rand() < 0.45) continue;
       }
     }
 
     const r = rand();
     const section = getSectionAt(t);
+    const isMelodyOnset = qb._isMelody;
+    const pitchDir = qb._pitchDir; // +1 rising, -1 falling, 0 neutral
     let typeIdx;
 
     if (section === 'intro' || section === 'outro' || section === 'calm' || section === 'before_last_chorus') {
@@ -749,22 +777,35 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       else if (r < starChance + 0.40) typeIdx = 1; // PYLON_L
       else typeIdx = r < starChance + 0.55 ? 2 : 3; // ARCH or BLOCK
     } else {
-      // Intense sections: action obstacles, stars ~5%
-      // Use melody/percussion classification to influence obstacle type
-      const isMelodyOnset = qb._isMelody;
+      // Intense sections: use pitch direction for melody-driven obstacle types
       if (isMelodyOnset) {
-        // Melody beats: favor side dodges (pylons) for flow
-        if (r < 0.30) typeIdx = 0;       // PYLON_R
-        else if (r < 0.60) typeIdx = 1;  // PYLON_L
-        else if (r < 0.78) typeIdx = 2;  // ARCH
-        else if (r < 0.95) typeIdx = 3;  // BLOCK
-        else if (r < 0.975) typeIdx = 4; // STAR_R
-        else typeIdx = 5;                // STAR_L
+        if (pitchDir > 0) {
+          // Rising melody → jump (BLOCK) or right dodge
+          if (r < 0.40) typeIdx = 3;       // BLOCK (jump!) — feels like rising
+          else if (r < 0.60) typeIdx = 0;  // PYLON_R
+          else if (r < 0.80) typeIdx = 1;  // PYLON_L
+          else if (r < 0.95) typeIdx = 2;  // ARCH
+          else typeIdx = r < 0.975 ? 4 : 5; // STAR
+        } else if (pitchDir < 0) {
+          // Falling melody → duck (ARCH) or left dodge
+          if (r < 0.40) typeIdx = 2;       // ARCH (duck!) — feels like descending
+          else if (r < 0.60) typeIdx = 1;  // PYLON_L
+          else if (r < 0.80) typeIdx = 0;  // PYLON_R
+          else if (r < 0.95) typeIdx = 3;  // BLOCK
+          else typeIdx = r < 0.975 ? 4 : 5; // STAR
+        } else {
+          // Neutral/sustained melody → side dodges for rhythmic flow
+          if (r < 0.30) typeIdx = 0;       // PYLON_R
+          else if (r < 0.60) typeIdx = 1;  // PYLON_L
+          else if (r < 0.78) typeIdx = 2;  // ARCH
+          else if (r < 0.95) typeIdx = 3;  // BLOCK
+          else typeIdx = r < 0.975 ? 4 : 5; // STAR
+        }
       } else {
-        // Percussion beats: favor jumps/ducks for impact
-        if (r < 0.20) typeIdx = 0;       // PYLON_R
-        else if (r < 0.40) typeIdx = 1;  // PYLON_L
-        else if (r < 0.65) typeIdx = 3;  // BLOCK (jump!)
+        // Percussion-only beats: favor jumps/ducks for percussive impact
+        if (r < 0.18) typeIdx = 0;       // PYLON_R
+        else if (r < 0.36) typeIdx = 1;  // PYLON_L
+        else if (r < 0.63) typeIdx = 3;  // BLOCK (jump!)
         else if (r < 0.90) typeIdx = 2;  // ARCH (duck!)
         else if (r < 0.95) typeIdx = 4;  // STAR_R
         else typeIdx = 5;                // STAR_L
@@ -791,13 +832,19 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   if (difficulty === 'HARD') {
     const eighthS = beatS / 2; // 8th note duration
     const extraObs = [];
+    // Extra obstacles must also respect minimum gap (use slightly tighter for HARD extras)
+    const extraMinGap = minGap * 0.8;
     for (let i = 0; i < obstacles.length - 1; i++) {
       const gap = obstacles[i + 1].time - obstacles[i].time;
-      // If gap is large enough, add midpoint obstacle snapped to grid
-      if (gap > eighthS * 1.5) {
+      // If gap is large enough and respects minimum spacing
+      if (gap > Math.max(eighthS * 1.5, extraMinGap * 2)) {
         const midT = obstacles[i].time + gap * 0.5;
         // Snap to nearest 16th note grid
         const snappedMidT = Math.round(midT / gridSize) * gridSize;
+        // Ensure the inserted obstacle respects minimum gap from both neighbors
+        const gapBefore = snappedMidT - obstacles[i].time;
+        const gapAfter = obstacles[i + 1].time - snappedMidT;
+        if (gapBefore < extraMinGap || gapAfter < extraMinGap) continue;
         if (snappedMidT > startT && snappedMidT < endT && !isSilentAt(snappedMidT)) {
           const midAmp = hasAmpData ? getAmplitudeAt(snappedMidT) : 0.5;
           if (midAmp < QUIET_BEAT_AMP) continue;
@@ -816,7 +863,17 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     obstacles.push(...extraObs);
   }
 
+  // Final pass: enforce minimum visual spacing by removing obstacles that are too close
   obstacles.sort((a, b) => a.time - b.time);
+  const finalMinGap = minGap * 0.9;
+  for (let i = obstacles.length - 1; i > 0; i--) {
+    if (obstacles[i].time - obstacles[i - 1].time < finalMinGap) {
+      // Keep the one with higher musical relevance (melody onset preferred)
+      // For simplicity, remove the later one
+      obstacles.splice(i, 1);
+    }
+  }
+
   return obstacles;
 }
 
@@ -1427,12 +1484,18 @@ function generateChart() {
   }
 
   obstacles.sort((a, b) => a.time - b.time);
+
+  // Enforce minimum visual spacing between obstacles
+  // Higher scroll speed spreads obstacles out more, lower compresses them
+  const builtInMinGap = st * 1.5 / Math.max(0.8, scrollSpeedMult);
+  for (let i = obstacles.length - 1; i > 0; i--) {
+    if (obstacles[i].time - obstacles[i - 1].time < builtInMinGap) {
+      obstacles.splice(i, 1);
+    }
+  }
+
   return obstacles;
 }
-
-// ============================================================
-// GAME STATE
-// ============================================================
 let gameState = 'SONG_SELECT';
 let songSelectIndex = 0;
 let obstacles = [];
@@ -1560,7 +1623,7 @@ window.addEventListener('keydown', (e) => {
     } else if (e.code === 'ArrowLeft' && settingsSelection === 1) {
       scrollSpeedMult = Math.max(0.5, +(scrollSpeedMult - 0.1).toFixed(1));
     } else if (e.code === 'ArrowRight' && settingsSelection === 1) {
-      scrollSpeedMult = Math.min(2.0, +(scrollSpeedMult + 0.1).toFixed(1));
+      scrollSpeedMult = Math.min(3.0, +(scrollSpeedMult + 0.1).toFixed(1));
     } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 3) {
       // Reset avatar
       avatarCustom = null;
@@ -3087,7 +3150,7 @@ function drawSettingsScreen() {
   // Speed bar
   const sBarW = 200, sBarH = 12;
   const sBarX = VX - sBarW / 2, sBarY = spdY + 20;
-  const spdFrac = (scrollSpeedMult - 0.5) / 1.5; // 0.5→2.0 mapped to 0→1
+  const spdFrac = (scrollSpeedMult - 0.5) / 2.5; // 0.5→3.0 mapped to 0→1
   ctx.fillStyle = 'rgba(40,40,80,0.7)';
   ctx.fillRect(sBarX, sBarY, sBarW, sBarH);
   ctx.fillStyle = isSpd ? '#00ddcc' : 'rgba(0,180,160,0.5)';
