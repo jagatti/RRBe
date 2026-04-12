@@ -256,7 +256,7 @@ function detectBeats(audioBuffer) {
   // Split into 3 frequency bands: low (<300Hz), mid (300-3000Hz), high (>3000Hz)
   // This better captures melody onsets vs. percussion
 
-  const windowSize = Math.floor(sampleRate * 0.023); // ~23ms windows (power-of-2 friendly)
+  const windowSize = Math.floor(sampleRate * 0.023); // ~23ms windows (~1013 samples at 44.1kHz)
   const hopSize = Math.floor(windowSize / 2);
   const numWindows = Math.floor((length - windowSize) / hopSize);
 
@@ -347,11 +347,7 @@ function detectBeats(audioBuffer) {
     const fluxOnset = combinedFlux > combinedAvg * threshold && combinedFlux > 0.0001;
 
     if ((fluxOnset || totalOnset) && t - lastOnsetTime > 0.10) {
-      // Store which band triggered the onset for later use
-      const isMelody = fluxMid[w] > fluxLow[w] * 1.2 && fluxMid[w] > fluxHigh[w] * 0.8;
-      const isPercussion = fluxLow[w] > fluxMid[w] * 1.5 || fluxHigh[w] > fluxMid[w] * 2.0;
       onsets.push(t);
-      onsets._lastIsMelody = isMelody;
       lastOnsetTime = t;
     }
   }
