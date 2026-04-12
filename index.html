@@ -574,6 +574,9 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   const QUIET_BEAT_AMP = 0.05;         // minimum amplitude for obstacle placement
   const VOCAL_SONG_THRESHOLD = 0.08;   // overall vocal score >8% = vocal song
   const VOCAL_SECTION_THRESHOLD = 0.10;// per-section vocal likelihood threshold
+  const CALM_NONMELODY_THIN_RATE = 0.45;// probability of removing non-melody beats in calm sections
+  const BREATHING_GAP_HARD = 14;       // consecutive obstacles before forced rest (HARD)
+  const BREATHING_GAP_NORMAL = 6;      // consecutive obstacles before forced rest (NORMAL)
 
   // Seeded random
   let seed = bpm * 1000 + Math.floor(duration) * 7;
@@ -783,7 +786,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
 
   // Track consecutive obstacle count for periodic breathing gaps
   let consecutiveCount = 0;
-  const BREATHING_GAP_INTERVAL = difficulty === 'HARD' ? 14 : 6; // HARD: longer sustained runs allowed
+  const BREATHING_GAP_INTERVAL = difficulty === 'HARD' ? BREATHING_GAP_HARD : BREATHING_GAP_NORMAL;
   const BREATHING_GAP_DURATION = difficulty === 'HARD' ? beatS * 1.0 : beatS * 1.5;
 
   for (let qi = 0; qi < quantizedBeats.length; qi++) {
@@ -837,7 +840,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       // In calm sections, thin out non-melody beats more aggressively
       // so obstacles clearly map to the main musical elements
       if (isCalmAt(t) && !isMelodyOnset) {
-        if (rand() < 0.45) continue;  // remove ~45% of non-melody beats in calm sections
+        if (rand() < CALM_NONMELODY_THIN_RATE) continue;
       }
     }
 
