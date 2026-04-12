@@ -42,6 +42,9 @@ const PERSP_POW = 1.5;
 
 // Obstacle scroll
 const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
+const SCROLL_SPEED_MIN = 0.5;
+const SCROLL_SPEED_MAX = 3.0;
+const SCROLL_SPEED_CLAMP = 0.8; // minimum divisor to prevent extreme gap compression at low speeds
 let scrollSpeedMult = 1.2; // user-adjustable: 0.5x (slow) – 3.0x (fast), default 1.2
 function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
 const CHART_START_OFFSET = 0; // no offset: music and obstacles start together after GO
@@ -725,7 +728,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   // Higher scroll speed = obstacles spread out more visually, so we can allow tighter timing
   // Lower scroll speed = obstacles compressed, need wider minimum gap
   const baseMinGap = difficulty === 'HARD' ? beatS * 0.35 : beatS * 0.50;
-  const minGap = baseMinGap / Math.max(0.8, scrollSpeedMult);
+  const minGap = baseMinGap / Math.max(SCROLL_SPEED_CLAMP, scrollSpeedMult);
 
   for (let qi = 0; qi < quantizedBeats.length; qi++) {
     const qb = quantizedBeats[qi];
@@ -1487,7 +1490,7 @@ function generateChart() {
 
   // Enforce minimum visual spacing between obstacles
   // Higher scroll speed spreads obstacles out more, lower compresses them
-  const builtInMinGap = st * 1.5 / Math.max(0.8, scrollSpeedMult);
+  const builtInMinGap = st * 1.5 / Math.max(SCROLL_SPEED_CLAMP, scrollSpeedMult);
   for (let i = obstacles.length - 1; i > 0; i--) {
     if (obstacles[i].time - obstacles[i - 1].time < builtInMinGap) {
       obstacles.splice(i, 1);
@@ -1621,9 +1624,9 @@ window.addEventListener('keydown', (e) => {
       gameVolume = Math.min(1, gameVolume + 0.05);
       applyVolume();
     } else if (e.code === 'ArrowLeft' && settingsSelection === 1) {
-      scrollSpeedMult = Math.max(0.5, +(scrollSpeedMult - 0.1).toFixed(1));
+      scrollSpeedMult = Math.max(SCROLL_SPEED_MIN, +(scrollSpeedMult - 0.1).toFixed(1));
     } else if (e.code === 'ArrowRight' && settingsSelection === 1) {
-      scrollSpeedMult = Math.min(3.0, +(scrollSpeedMult + 0.1).toFixed(1));
+      scrollSpeedMult = Math.min(SCROLL_SPEED_MAX, +(scrollSpeedMult + 0.1).toFixed(1));
     } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 3) {
       // Reset avatar
       avatarCustom = null;
@@ -3150,7 +3153,7 @@ function drawSettingsScreen() {
   // Speed bar
   const sBarW = 200, sBarH = 12;
   const sBarX = VX - sBarW / 2, sBarY = spdY + 20;
-  const spdFrac = (scrollSpeedMult - 0.5) / 2.5; // 0.5→3.0 mapped to 0→1
+  const spdFrac = (scrollSpeedMult - SCROLL_SPEED_MIN) / (SCROLL_SPEED_MAX - SCROLL_SPEED_MIN);
   ctx.fillStyle = 'rgba(40,40,80,0.7)';
   ctx.fillRect(sBarX, sBarY, sBarW, sBarH);
   ctx.fillStyle = isSpd ? '#00ddcc' : 'rgba(0,180,160,0.5)';
