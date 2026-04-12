@@ -45,13 +45,15 @@ const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
 const SCROLL_SPEED_MIN = 0.5;
 const SCROLL_SPEED_MAX = 2.0; // capped at 2.0x — speeds above this are humanly unreadable
 const SCROLL_SPEED_CLAMP = 0.8; // minimum multiplier floor to prevent overly tight spacing at low speeds
-let scrollSpeedMult = 1.2; // user-adjustable: 0.5x (slow) – 2.0x (fast), default 1.2
+let scrollSpeedMult = 1.5; // user-adjustable: 0.5x (slow) – 2.0x (fast), default 1.5
 function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
 const CHART_START_OFFSET = 0; // no offset: music and obstacles start together after GO
 
 // Obstacle visibility
-const OBS_VIS_CUTOFF = 0.10;  // z value below which obstacles are hidden (further = smaller number)
-const OBS_SCALE_MIN  = 0.25;  // scale at cutoff (far) — small for dramatic depth
+const OBS_VIS_CUTOFF = -0.30;  // z value below which obstacles are hidden — show from far away
+const OBS_FAR_ALPHA  = 0.30;   // opacity at the farthest visible distance
+const OBS_FULL_ALPHA_Z = 0.35; // z at which obstacles reach full opacity
+const OBS_SCALE_MIN  = 0.15;  // scale at cutoff (far) — small for dramatic depth
 const OBS_SCALE_MAX  = 0.85;  // scale at z=1.0 (near) — large for impact
 
 // Timing windows (seconds)
@@ -2380,7 +2382,7 @@ function drawObstacles() {
   const visible = [];
   for (const o of obstacles) {
     const z = 1.0 - (o.time - now) / effectiveScrollTime();
-    if (z < -0.02 || z > 1.3) continue;
+    if (z < OBS_VIS_CUTOFF - 0.05 || z > 1.3) continue;
     if (o.judged && o.judgment !== 'MISS') continue;
     visible.push({ obs: o, z });
   }
@@ -2393,10 +2395,21 @@ function drawObstacles() {
     const s = zToScreen(z);
     const y = s.y;
     // Linear scale: gentle size progression from far to near
-    const scale = OBS_SCALE_MIN + (Math.min(1.0, z) - OBS_VIS_CUTOFF) / (1.0 - OBS_VIS_CUTOFF) * (OBS_SCALE_MAX - OBS_SCALE_MIN);
+    const zClamped = Math.max(0, Math.min(1.0, z)); // clamp z for scale calculation
+    const scale = OBS_SCALE_MIN + zClamped * (OBS_SCALE_MAX - OBS_SCALE_MIN);
 
-    // Alpha: fade in gradually from far, dim if missed
-    let alpha = Math.min(1, s.t * 2.5);
+    // Alpha: far obstacles start at OBS_FAR_ALPHA, gradually increase to 1.0
+    // This lets players see obstacles from much further away
+    let alpha;
+    if (z <= OBS_VIS_CUTOFF) {
+      alpha = 0;
+    } else if (z <= OBS_FULL_ALPHA_Z) {
+      // Fade in from OBS_FAR_ALPHA at cutoff to 1.0 at OBS_FULL_ALPHA_Z
+      const fadeProgress = (z - OBS_VIS_CUTOFF) / (OBS_FULL_ALPHA_Z - OBS_VIS_CUTOFF);
+      alpha = OBS_FAR_ALPHA + (1.0 - OBS_FAR_ALPHA) * fadeProgress;
+    } else {
+      alpha = 1.0;
+    }
     if (o.judged && o.judgment === 'MISS') {
       const fadeZ = z - 1.0;
       alpha = Math.max(0, 1 - fadeZ * 4) * 0.35;
