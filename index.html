@@ -801,7 +801,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     // Periodic breathing gaps — even in dense sections, insert brief rests
     // so the pattern doesn't feel monotonous
     if (consecutiveCount >= BREATHING_GAP_INTERVAL && !isCalmAt(t)) {
-      if (t - lastTime < BREATHING_GAP_DURATION * scrollGapMult) continue;
+      if (t - lastTime < BREATHING_GAP_DURATION) continue;
       consecutiveCount = 0; // reset after breathing gap
     }
 

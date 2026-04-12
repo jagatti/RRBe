@@ -24,7 +24,7 @@
 ║     判定 94.5%          649 COMBO         SCORE: 48200      ║
 ║     PERFECT  312                        [===ACCURACY===]    ║
 ║     GREAT     45                                            ║
-║     GOOD      12                                            ║
+║     NICE      12                                            ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
@@ -83,13 +83,14 @@ obstacle reaches the **judgment zone** near the character:
 |----------|--------------|-------|-------|
 | **PERFECT** | ±55 ms | 100 pts | ✅ continues |
 | **GREAT** | ±105 ms | 80 pts | ✅ continues |
-| **GOOD** | ±155 ms | 50 pts | ✅ continues |
+| **NICE** | ±155 ms | 50 pts | ✅ continues |
 | **BAD** | ±210 ms | 20 pts | ❌ resets |
 | **MISS** | >260 ms | 0 pts | ❌ resets |
 
 ### Scoring
-- Base score × **combo multiplier** (`floor(combo ÷ 10 + 1)`)
-- Every 10 consecutive successful dodges increases the multiplier
+- All PERFECT = exactly **1,000,000 points**
+- Each obstacle's score: `(1,000,000 ÷ total obstacles) × (judgment% / 100)`
+- PERFECT=100%, GREAT=80%, NICE=50%, BAD=20%, MISS=0%
 
 ### Game Flow
 - **READY → GO** countdown animation starts each round
