@@ -57,7 +57,7 @@ const OBS_SCALE_MAX  = 0.85;  // scale at z=1.0 (near) — large for impact
 // Timing windows (seconds)
 const T_PERFECT = 0.055;
 const T_GREAT   = 0.105;
-const T_GOOD    = 0.155;
+const T_NICE    = 0.155;
 const T_BAD     = 0.210;
 const T_MISS    = 0.260;
 
@@ -97,9 +97,9 @@ const OBS_LABELS = {
 // Judgment
 const JUDGE_COLORS = {
   PERFECT: '#00ffff', GREAT: '#44ff44',
-  GOOD: '#ffff00', BAD: '#ff8800', MISS: '#ff2244'
+  NICE: '#ffff00', BAD: '#ff8800', MISS: '#ff2244'
 };
-const JUDGE_SCORE = { PERFECT: 100, GREAT: 80, GOOD: 50, BAD: 20, MISS: 0 };
+const JUDGE_SCORE = { PERFECT: 100, GREAT: 80, NICE: 50, BAD: 20, MISS: 0 };
 
 // Character action durations
 const ACTION_DUR = 0.18;
@@ -575,7 +575,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   const VOCAL_SONG_THRESHOLD = 0.08;   // overall vocal score >8% = vocal song
   const VOCAL_SECTION_THRESHOLD = 0.10;// per-section vocal likelihood threshold
   const CALM_NONMELODY_THIN_RATE = 0.45;// probability of removing non-melody beats in calm sections
-  const BREATHING_GAP_HARD = 14;       // consecutive obstacles before forced rest (HARD)
+  const BREATHING_GAP_HARD = 20;       // consecutive obstacles before forced rest (HARD)
   const BREATHING_GAP_NORMAL = 6;      // consecutive obstacles before forced rest (NORMAL)
 
   // Seeded random
@@ -757,10 +757,9 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   let lastType = -1;
   let lastTime = -1;
   // Minimum gap based on difficulty, scaled by scroll speed
-  // Higher scroll speed = wider minimum gap = more visual spacing between obstacles
-  const baseMinGapHard = beatS * 0.25;    // HARD: allow 16th-note density
+  // Scroll speed only affects visual spacing, NOT obstacle count
+  const baseMinGapHard = beatS * 0.22;    // HARD: tight 16th-note density
   const baseMinGapNormal = beatS * 0.50;
-  const scrollGapMult = Math.max(1.0, scrollSpeedMult);
 
   // Dynamic minimum gap: tighter in intense sections, wider in calm sections
   // This creates the pacing variation players want
@@ -770,18 +769,18 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     let base;
     if (section === 'intro' || section === 'outro') {
       // Very wide gaps in intro/outro for breathing room
-      base = difficulty === 'HARD' ? beatS * 0.55 : beatS * 0.90;
+      base = difficulty === 'HARD' ? beatS * 0.50 : beatS * 0.90;
     } else if (section === 'calm' || section === 'before_last_chorus') {
       // Wide gaps in calm sections — clear contrast with intense parts
-      base = difficulty === 'HARD' ? beatS * 0.45 : beatS * 0.70;
+      base = difficulty === 'HARD' ? beatS * 0.40 : beatS * 0.70;
     } else if (isIntenseAt(t)) {
       // Tight gaps in intense sections — this is where the challenge lives
       base = difficulty === 'HARD' ? baseMinGapHard : baseMinGapNormal;
     } else {
       // Default moderate
-      base = difficulty === 'HARD' ? beatS * 0.35 : beatS * 0.60;
+      base = difficulty === 'HARD' ? beatS * 0.30 : beatS * 0.60;
     }
-    return base * scrollGapMult;
+    return base;
   }
 
   // Track consecutive obstacle count for periodic breathing gaps
@@ -930,7 +929,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       // If gap is large enough for at least one extra obstacle
       if (gap > sixteenthS * 2.2) {
         // Try to insert multiple obstacles at 16th-note grid positions
-        const numInserts = Math.min(3, Math.floor(gap / (sixteenthS * 1.1)) - 1);
+        const numInserts = Math.min(4, Math.floor(gap / (sixteenthS * 1.1)) - 1);
         for (let ins = 1; ins <= numInserts; ins++) {
           const insertT = obstacles[i].time + gap * (ins / (numInserts + 1));
           // Snap to nearest 16th note grid
@@ -968,7 +967,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   obstacles.sort((a, b) => a.time - b.time);
   for (let i = obstacles.length - 1; i > 0; i--) {
     // In HARD mode, use tighter enforcement so 16th-note runs survive
-    const enforceMult = difficulty === 'HARD' ? 0.75 : 0.90;
+    const enforceMult = difficulty === 'HARD' ? 0.65 : 0.90;
     const finalMinGap = getDynamicMinGap(obstacles[i].time) * enforceMult;
     if (obstacles[i].time - obstacles[i - 1].time < finalMinGap) {
       obstacles.splice(i, 1);
@@ -1586,9 +1585,9 @@ function generateChart() {
 
   obstacles.sort((a, b) => a.time - b.time);
 
-  // Enforce minimum visual spacing between obstacles
-  // Higher scroll speed = wider gap = more visual spacing between obstacles
-  const builtInMinGap = st * 1.5 * Math.max(1.0, scrollSpeedMult);
+  // Enforce minimum spacing between obstacles
+  // Scroll speed only affects visual spacing, NOT obstacle count
+  const builtInMinGap = st * 1.5;
   for (let i = obstacles.length - 1; i > 0; i--) {
     if (obstacles[i].time - obstacles[i - 1].time < builtInMinGap) {
       obstacles.splice(i, 1);
@@ -1602,7 +1601,7 @@ let songSelectIndex = 0;
 let obstacles = [];
 let score = 0, combo = 0, maxCombo = 0;
 let comboPopTimer = 0; // animation timer for combo pop effect
-let judgeCounts = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
+let judgeCounts = { PERFECT: 0, GREAT: 0, NICE: 0, BAD: 0, MISS: 0 };
 let accuracy = 100;
 let lastJudge = null, judgeTimer = 0;
 let beatFlash = 0;
@@ -1617,9 +1616,11 @@ const READY_GO_DUR = 2.5; // total duration: READY 1.5s, GO 1.0s
 
 // Goal line state
 let goalLineZ = -1;  // z position of the goal line (-1 = not visible)
+let goalReached = false; // true when goal line reaches judgment line
+let celebrationTimer = 0; // countdown for celebration animation before result
 
 // Character action state
-let charAction = 'RUN';   // RUN, DODGE_L, DODGE_R, DUCK, JUMP
+let charAction = 'RUN';   // RUN, DODGE_L, DODGE_R, DUCK, JUMP, CHEER
 let charActionTimer = 0;
 let charJumpY = 0;        // vertical offset for jump
 
@@ -1831,7 +1832,7 @@ function judgeKeyPress(keyCode) {
   let j;
   if (bestDiff <= T_PERFECT)    j = 'PERFECT';
   else if (bestDiff <= T_GREAT) j = 'GREAT';
-  else if (bestDiff <= T_GOOD)  j = 'GOOD';
+  else if (bestDiff <= T_NICE)  j = 'NICE';
   else                          j = 'BAD';
 
   best.judgment = j;
@@ -1845,8 +1846,9 @@ function judgeKeyPress(keyCode) {
     if (combo > maxCombo) maxCombo = combo;
   }
 
-  const mult = Math.floor(combo / 10) + 1;
-  score += JUDGE_SCORE[j] * mult;
+  // Score: accumulate raw judge points. Display score = rawScore / (N * 100) * 1000000
+  // All Perfect = exactly 1,000,000 points
+  score += JUDGE_SCORE[j];
 
   lastJudge = j;
   judgeTimer = 0.5;
@@ -1883,10 +1885,27 @@ function processAutoMisses() {
 }
 
 function updateAccuracy() {
-  const tot = judgeCounts.PERFECT + judgeCounts.GREAT + judgeCounts.GOOD + judgeCounts.BAD + judgeCounts.MISS;
+  const tot = judgeCounts.PERFECT + judgeCounts.GREAT + judgeCounts.NICE + judgeCounts.BAD + judgeCounts.MISS;
   if (tot === 0) { accuracy = 100; return; }
-  const s = judgeCounts.PERFECT * 100 + judgeCounts.GREAT * 80 + judgeCounts.GOOD * 50 + judgeCounts.BAD * 20;
+  const s = judgeCounts.PERFECT * 100 + judgeCounts.GREAT * 80 + judgeCounts.NICE * 50 + judgeCounts.BAD * 20;
   accuracy = s / (tot * 100) * 100;
+}
+
+// Display score: raw score mapped to 0-1,000,000 scale (All Perfect = 1,000,000)
+function getDisplayScore() {
+  const total = obstacles.length;
+  if (total === 0) return 0;
+  return Math.round(score * 1000000 / (total * 100));
+}
+
+// Full combo check: all judgments NICE or better (no BAD, no MISS)
+function isFullCombo() {
+  return obstacles.length > 0 && judgeCounts.MISS === 0 && judgeCounts.BAD === 0;
+}
+
+// All Perfect check
+function isAllPerfect() {
+  return obstacles.length > 0 && judgeCounts.PERFECT === obstacles.length;
 }
 
 // ============================================================
@@ -1920,8 +1939,8 @@ function update(deltaT) {
   comboPopTimer = Math.max(0, comboPopTimer - deltaT);
   for (const k in keyFlash) keyFlash[k] = Math.max(0, keyFlash[k] - deltaT * 5);
 
-  // Character action timer
-  if (charActionTimer > 0) {
+  // Character action timer (skip during CHEER — cheer continues until result)
+  if (charAction !== 'CHEER' && charActionTimer > 0) {
     charActionTimer -= deltaT;
     if (charAction === 'JUMP') {
       const t = 1 - (charActionTimer / ACTION_DUR);
@@ -1936,7 +1955,10 @@ function update(deltaT) {
 
   updatePart(deltaT);
 
-  roadScroll = (roadScroll + deltaT * 3.0) % 1.0;
+  // Stop road scrolling when goal is reached
+  if (!goalReached) {
+    roadScroll = (roadScroll + deltaT * 3.0) % 1.0;
+  }
   charPhase += deltaT * 12;
 
   const now = musicTime();
@@ -1949,14 +1971,36 @@ function update(deltaT) {
   if (now >= goalAppearTime) {
     // goalLineZ goes from 0 (horizon) to 1 (judgment line)
     goalLineZ = Math.min(1.3, (now - goalAppearTime) / effectiveScrollTime());
+    // Stop scrolling when goal line reaches the judgment line
+    if (goalLineZ >= 1.0 && !goalReached) {
+      goalReached = true;
+      goalLineZ = 1.0; // freeze at judgment line
+      // Start celebration if full combo
+      if (isFullCombo()) {
+        charAction = 'CHEER';
+        charActionTimer = 0;
+        charJumpY = 0;
+        celebrationTimer = 2.0; // 2 seconds of celebration
+      }
+    }
+    if (goalReached) {
+      goalLineZ = 1.0; // keep goal at judgment line
+    }
   } else {
     goalLineZ = -1;
+  }
+
+  // Celebration countdown
+  if (celebrationTimer > 0) {
+    celebrationTimer -= deltaT;
   }
 
   const allDone = obstacles.length > 0 && obstacles.every(o => o.judged);
   // For custom songs, wait until the actual song file finishes playing
   const endTime = isCustomSong ? Math.max(lastObsTime + 1.5, SONG_DURATION) : lastObsTime + 1.5;
-  if (allDone && now >= endTime) {
+  // Wait for celebration to finish before showing result
+  const canShowResult = celebrationTimer <= 0;
+  if (allDone && now >= endTime && canShowResult) {
     stopCustomAudio();
     gameState = 'RESULT';
   }
@@ -2296,7 +2340,7 @@ function drawRhythmBalls() {
     } else if (f.judgment === 'GREAT') {
       col = '#ffdd88';
       glowCol = '#ffcc44';
-    } else if (f.judgment === 'GOOD') {
+    } else if (f.judgment === 'NICE') {
       col = '#ff9933';
       glowCol = '#ff8822';
     } else if (f.judgment === 'BAD') {
@@ -2574,13 +2618,18 @@ function drawCharacter() {
     scaleY = 0.5;
   } else if (charAction === 'JUMP') {
     cy = baseY - charJumpY;
+  } else if (charAction === 'CHEER') {
+    // Celebration: character bounces joyfully
+    const cheerBounce = Math.abs(Math.sin(phase * 0.5)) * 30;
+    cy = baseY - cheerBounce;
   }
 
-  // Running bounce (only while running)
+  // Running bounce (only while running), cheer animation
   const isRunning = charAction === 'RUN';
+  const isCheering = charAction === 'CHEER';
   const bounce = isRunning ? Math.abs(Math.sin(phase)) * 4 : 0;
-  const legSwing = isRunning ? Math.sin(phase) * 0.4 : 0; // radians for leg rotation
-  const armSwing = isRunning ? Math.sin(phase + Math.PI) * 0.5 : 0;
+  const legSwing = isRunning ? Math.sin(phase) * 0.4 : (isCheering ? Math.sin(phase * 0.5) * 0.2 : 0);
+  const armSwing = isRunning ? Math.sin(phase + Math.PI) * 0.5 : (isCheering ? -1.2 + Math.sin(phase * 0.8) * 0.4 : 0); // arms raised during cheer
 
   ctx.save();
   ctx.translate(cx, cy - bounce);
@@ -2721,7 +2770,7 @@ function drawHUD() {
   ctx.font = 'bold 22px sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'top';
-  ctx.fillText(String(score), W - 25, 18);
+  ctx.fillText(String(getDisplayScore()), W - 25, 18);
   ctx.font = '12px sans-serif';
   ctx.fillStyle = 'rgba(100,200,255,0.7)';
   ctx.fillText('SCORE', W - 25, 44);
@@ -2740,7 +2789,7 @@ function drawHUD() {
   const stats = [
     ['PERFECT', judgeCounts.PERFECT, JUDGE_COLORS.PERFECT],
     ['GREAT',   judgeCounts.GREAT,   JUDGE_COLORS.GREAT],
-    ['GOOD',    judgeCounts.GOOD,    JUDGE_COLORS.GOOD],
+    ['NICE',    judgeCounts.NICE,    JUDGE_COLORS.NICE],
     ['BAD',     judgeCounts.BAD,     JUDGE_COLORS.BAD],
     ['MISS',    judgeCounts.MISS,    JUDGE_COLORS.MISS],
   ];
@@ -3064,7 +3113,7 @@ function drawStartScreen() {
     '⭐ 右のスター → → を押して取る',
     '⭐ 左のスター → ← を押して取る',
     '',
-    '判定: PERFECT → GREAT → GOOD → BAD → MISS',
+    '判定: PERFECT → GREAT → NICE → BAD → MISS',
   ];
   lines.forEach(function(l, i) { ctx.fillText(l, VX, H / 2 - 20 + i * 24); });
 
@@ -3138,7 +3187,7 @@ function drawResultScreen() {
   ctx.shadowBlur = 0;
   ctx.font = 'bold 24px sans-serif';
   ctx.fillStyle = '#00ddff';
-  ctx.fillText('スコア: ' + score, VX, 300);
+  ctx.fillText('スコア: ' + getDisplayScore(), VX, 300);
 
   ctx.fillStyle = '#ffee44';
   ctx.font = '20px sans-serif';
@@ -3147,8 +3196,33 @@ function drawResultScreen() {
   ctx.fillStyle = '#fff';
   ctx.fillText('精度: ' + accuracy.toFixed(2) + '%', VX, 365);
 
-  // ALL COMBO display when no misses
-  if (judgeCounts.MISS === 0 && obstacles.length > 0) {
+  // ALL PERFECT display — luxurious golden rainbow effect
+  if (isAllPerfect()) {
+    const apPulse = 0.7 + 0.3 * Math.sin(t * 4);
+    const rainbowHue = (t * 60) % 360;
+    ctx.save();
+    // Outer glow
+    ctx.shadowColor = `hsl(${rainbowHue}, 100%, 70%)`;
+    ctx.shadowBlur = 50 * apPulse;
+    ctx.font = "bold 52px 'Impact', sans-serif";
+    // Rainbow gradient text
+    const apGrad = ctx.createLinearGradient(VX - 200, 0, VX + 200, 0);
+    apGrad.addColorStop(0, `hsl(${rainbowHue}, 100%, 70%)`);
+    apGrad.addColorStop(0.25, `hsl(${(rainbowHue + 60) % 360}, 100%, 70%)`);
+    apGrad.addColorStop(0.5, `hsl(${(rainbowHue + 120) % 360}, 100%, 70%)`);
+    apGrad.addColorStop(0.75, `hsl(${(rainbowHue + 180) % 360}, 100%, 70%)`);
+    apGrad.addColorStop(1, `hsl(${(rainbowHue + 240) % 360}, 100%, 70%)`);
+    ctx.fillStyle = apGrad;
+    ctx.fillText('✨ ALL PERFECT ✨', VX, 265);
+    // Second line with sparkle
+    ctx.font = "bold 28px 'Impact', sans-serif";
+    ctx.shadowBlur = 30 * apPulse;
+    ctx.fillStyle = `rgba(255,215,0,${apPulse})`;
+    ctx.fillText('🏆 1,000,000 pts 🏆', VX, 258 + 42);
+    ctx.restore();
+  }
+  // Full Combo display (NICE or better, not All Perfect)
+  else if (isFullCombo()) {
     const acPulse = 0.7 + 0.3 * Math.sin(t * 5);
     ctx.save();
     ctx.shadowColor = '#ff44ff';
@@ -3163,7 +3237,7 @@ function drawResultScreen() {
   const resultStats = [
     ['PERFECT', judgeCounts.PERFECT, JUDGE_COLORS.PERFECT],
     ['GREAT',   judgeCounts.GREAT,   JUDGE_COLORS.GREAT],
-    ['GOOD',    judgeCounts.GOOD,    JUDGE_COLORS.GOOD],
+    ['NICE',    judgeCounts.NICE,    JUDGE_COLORS.NICE],
     ['BAD',     judgeCounts.BAD,     JUDGE_COLORS.BAD],
     ['MISS',    judgeCounts.MISS,    JUDGE_COLORS.MISS],
   ];
@@ -3626,6 +3700,8 @@ function resetGame() {
   gameState = 'READY_GO';
   readyGoTimer = READY_GO_DUR;
   goalLineZ = -1;
+  goalReached = false;
+  celebrationTimer = 0;
 
   // Use beat-detected chart for custom MP3, normal generator otherwise
   if (isCustomSong && customSongBeats) {
@@ -3635,7 +3711,7 @@ function resetGame() {
   }
 
   score = 0; combo = 0; maxCombo = 0; comboPopTimer = 0;
-  judgeCounts = { PERFECT: 0, GREAT: 0, GOOD: 0, BAD: 0, MISS: 0 };
+  judgeCounts = { PERFECT: 0, GREAT: 0, NICE: 0, BAD: 0, MISS: 0 };
   accuracy = 100;
   lastJudge = null; judgeTimer = 0;
   beatFlash = 0;
