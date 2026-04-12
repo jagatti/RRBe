@@ -50,9 +50,9 @@ function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
 const CHART_START_OFFSET = 0; // no offset: music and obstacles start together after GO
 
 // Obstacle visibility
-const OBS_VIS_CUTOFF = -0.30;  // z value below which obstacles are hidden — show from far away
-const OBS_FAR_ALPHA  = 0.30;   // opacity at the farthest visible distance
-const OBS_FULL_ALPHA_Z = 0.35; // z at which obstacles reach full opacity
+const OBS_VIS_CUTOFF = -0.15;  // z value below which obstacles are hidden
+const OBS_FAR_ALPHA  = 0.08;   // opacity at the farthest visible distance (very thin hint)
+const OBS_FULL_ALPHA_Z = 0.50; // z at which obstacles reach full opacity
 const OBS_SCALE_MIN  = 0.15;  // scale at cutoff (far) — small for dramatic depth
 const OBS_SCALE_MAX  = 0.85;  // scale at z=1.0 (near) — large for impact
 
@@ -761,7 +761,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   // Minimum gap based on difficulty, scaled by scroll speed
   // Scroll speed only affects visual spacing, NOT obstacle count
   const baseMinGapHard = beatS * 0.22;    // HARD: tight 16th-note density
-  const baseMinGapNormal = beatS * 0.50;
+  const baseMinGapNormal = beatS * 0.60;
 
   // Dynamic minimum gap: tighter in intense sections, wider in calm sections
   // This creates the pacing variation players want
@@ -771,16 +771,16 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     let base;
     if (section === 'intro' || section === 'outro') {
       // Very wide gaps in intro/outro for breathing room
-      base = difficulty === 'HARD' ? beatS * 0.50 : beatS * 0.90;
+      base = difficulty === 'HARD' ? beatS * 0.55 : beatS * 1.00;
     } else if (section === 'calm' || section === 'before_last_chorus') {
       // Wide gaps in calm sections — clear contrast with intense parts
-      base = difficulty === 'HARD' ? beatS * 0.40 : beatS * 0.70;
+      base = difficulty === 'HARD' ? beatS * 0.45 : beatS * 0.80;
     } else if (isIntenseAt(t)) {
       // Tight gaps in intense sections — this is where the challenge lives
       base = difficulty === 'HARD' ? baseMinGapHard : baseMinGapNormal;
     } else {
       // Default moderate
-      base = difficulty === 'HARD' ? beatS * 0.30 : beatS * 0.60;
+      base = difficulty === 'HARD' ? beatS * 0.35 : beatS * 0.70;
     }
     return base;
   }
@@ -2405,8 +2405,9 @@ function drawObstacles() {
       alpha = 0;
     } else if (z <= OBS_FULL_ALPHA_Z) {
       // Fade in from OBS_FAR_ALPHA at cutoff to 1.0 at OBS_FULL_ALPHA_Z
+      // Quadratic easing keeps obstacles thin longer, matching gameplay feel
       const fadeProgress = (z - OBS_VIS_CUTOFF) / (OBS_FULL_ALPHA_Z - OBS_VIS_CUTOFF);
-      alpha = OBS_FAR_ALPHA + (1.0 - OBS_FAR_ALPHA) * fadeProgress;
+      alpha = OBS_FAR_ALPHA + (1.0 - OBS_FAR_ALPHA) * fadeProgress * fadeProgress;
     } else {
       alpha = 1.0;
     }
