@@ -252,38 +252,124 @@ function detectBeats(audioBuffer) {
     for (let i = 0; i < length; i++) mono[i] += data[i] / numChannels;
   }
 
-  // Compute energy in windows
-  const windowSize = Math.floor(sampleRate * 0.02); // 20ms windows
+  // ---- Multi-band spectral flux onset detection ----
+  // Split into 3 frequency bands: low (<300Hz), mid (300-3000Hz), high (>3000Hz)
+  // This better captures melody onsets vs. percussion
+
+  const windowSize = Math.floor(sampleRate * 0.023); // ~23ms windows (power-of-2 friendly)
   const hopSize = Math.floor(windowSize / 2);
   const numWindows = Math.floor((length - windowSize) / hopSize);
-  const energy = new Float32Array(numWindows);
 
-  for (let w = 0; w < numWindows; w++) {
-    let sum = 0;
-    const start = w * hopSize;
-    for (let i = start; i < start + windowSize; i++) {
-      sum += mono[i] * mono[i];
-    }
-    energy[w] = sum / windowSize;
+  // Compute energy in each band using simple bandpass approximation
+  // Low-pass: running average (smooths high frequencies)
+  // Band energy via difference of smoothed signals
+  const energyLow = new Float32Array(numWindows);
+  const energyMid = new Float32Array(numWindows);
+  const energyHigh = new Float32Array(numWindows);
+  const energyTotal = new Float32Array(numWindows);
+
+  // Pre-filter: create band-separated signals using simple IIR filters
+  const lowPass = new Float32Array(length);
+  const midPass = new Float32Array(length);
+  const highPass = new Float32Array(length);
+
+  // Simple one-pole low-pass filter coefficients
+  const lowCutoff = 300 / sampleRate;
+  const midCutoff = 3000 / sampleRate;
+  const alphaLow = Math.exp(-2 * Math.PI * lowCutoff);
+  const alphaMid = Math.exp(-2 * Math.PI * midCutoff);
+
+  let lpLow = 0, lpMid = 0;
+  for (let i = 0; i < length; i++) {
+    lpLow = alphaLow * lpLow + (1 - alphaLow) * mono[i];
+    lpMid = alphaMid * lpMid + (1 - alphaMid) * mono[i];
+    lowPass[i] = lpLow;
+    highPass[i] = mono[i] - lpMid;
+    midPass[i] = lpMid - lpLow;
   }
 
-  // Compute local average energy and find onsets
-  const avgWindow = 40; // ~400ms history
+  for (let w = 0; w < numWindows; w++) {
+    let sumLow = 0, sumMid = 0, sumHigh = 0, sumTotal = 0;
+    const start = w * hopSize;
+    for (let i = start; i < start + windowSize; i++) {
+      sumLow += lowPass[i] * lowPass[i];
+      sumMid += midPass[i] * midPass[i];
+      sumHigh += highPass[i] * highPass[i];
+      sumTotal += mono[i] * mono[i];
+    }
+    energyLow[w] = sumLow / windowSize;
+    energyMid[w] = sumMid / windowSize;
+    energyHigh[w] = sumHigh / windowSize;
+    energyTotal[w] = sumTotal / windowSize;
+  }
+
+  // Compute spectral flux (positive energy increase) for each band
+  const fluxLow = new Float32Array(numWindows);
+  const fluxMid = new Float32Array(numWindows);
+  const fluxHigh = new Float32Array(numWindows);
+  for (let w = 1; w < numWindows; w++) {
+    fluxLow[w] = Math.max(0, energyLow[w] - energyLow[w - 1]);
+    fluxMid[w] = Math.max(0, energyMid[w] - energyMid[w - 1]);
+    fluxHigh[w] = Math.max(0, energyHigh[w] - energyHigh[w - 1]);
+  }
+
+  // Detect onsets using combined spectral flux with adaptive threshold
+  const avgWindow = 40; // ~460ms history for adaptive threshold
   const onsets = [];
-  const threshold = 1.5; // onset must be 1.5x local average
-  let lastOnsetTime = -0.2;
+  const threshold = 1.4; // onset must exceed local average by this factor
+  let lastOnsetTime = -0.15;
 
   for (let w = avgWindow; w < numWindows; w++) {
-    let localAvg = 0;
-    for (let j = w - avgWindow; j < w; j++) localAvg += energy[j];
-    localAvg /= avgWindow;
+    // Compute local average for each band
+    let avgLow = 0, avgMid = 0, avgHigh = 0, avgTotal = 0;
+    for (let j = w - avgWindow; j < w; j++) {
+      avgLow += fluxLow[j];
+      avgMid += fluxMid[j];
+      avgHigh += fluxHigh[j];
+      avgTotal += energyTotal[j];
+    }
+    avgLow /= avgWindow;
+    avgMid /= avgWindow;
+    avgHigh /= avgWindow;
+    avgTotal /= avgWindow;
 
     const t = (w * hopSize) / sampleRate;
-    if (energy[w] > localAvg * threshold && energy[w] > 0.001 && t - lastOnsetTime > 0.12) {
+
+    // Combined onset detection: weighted sum of band fluxes
+    // Mid-band (melody) gets highest weight for better melody tracking
+    const combinedFlux = fluxLow[w] * 0.25 + fluxMid[w] * 0.50 + fluxHigh[w] * 0.25;
+    const combinedAvg = avgLow * 0.25 + avgMid * 0.50 + avgHigh * 0.25;
+
+    // Also check total energy onset (backward compatibility)
+    const totalOnset = energyTotal[w] > avgTotal * threshold && energyTotal[w] > 0.001;
+
+    // Onset if combined flux exceeds threshold OR total energy onset detected
+    const fluxOnset = combinedFlux > combinedAvg * threshold && combinedFlux > 0.0001;
+
+    if ((fluxOnset || totalOnset) && t - lastOnsetTime > 0.10) {
+      // Store which band triggered the onset for later use
+      const isMelody = fluxMid[w] > fluxLow[w] * 1.2 && fluxMid[w] > fluxHigh[w] * 0.8;
+      const isPercussion = fluxLow[w] > fluxMid[w] * 1.5 || fluxHigh[w] > fluxMid[w] * 2.0;
       onsets.push(t);
+      onsets._lastIsMelody = isMelody;
       lastOnsetTime = t;
     }
   }
+
+  // Store per-onset melody/percussion classification
+  const onsetIsMelody = new Uint8Array(onsets.length);
+  // Re-classify each onset
+  for (let i = 0; i < onsets.length; i++) {
+    const t = onsets[i];
+    const w = Math.floor((t * sampleRate) / hopSize);
+    if (w > 0 && w < numWindows) {
+      const mFlux = fluxMid[w];
+      const lFlux = fluxLow[w];
+      const hFlux = fluxHigh[w];
+      onsetIsMelody[i] = (mFlux > lFlux * 1.2 && mFlux > hFlux * 0.8) ? 1 : 0;
+    }
+  }
+  onsets._onsetIsMelody = onsetIsMelody;
 
   // Store waveform amplitude data for chart generation
   // Compute RMS energy in larger windows (100ms) for amplitude envelope
@@ -323,10 +409,8 @@ function detectBeats(audioBuffer) {
     return 0;
   });
 
-  // Compute spectral centroid in vocal range (300-3000 Hz) vs full spectrum
-  // to help distinguish vocal vs instrumental sections
-  const fftSize = 2048;
-  const vocalWindowSec = 2.0; // analyze in 2-second windows
+  // ---- Improved vocal detection using spectral analysis ----
+  const vocalWindowSec = 1.5; // 1.5-second windows for finer resolution
   const vocalWindowSamples = Math.floor(sampleRate * vocalWindowSec);
   const numVocalWindows = Math.floor(length / vocalWindowSamples);
   const vocalLikelihood = new Float32Array(numVocalWindows);
@@ -334,33 +418,53 @@ function detectBeats(audioBuffer) {
   for (let vw = 0; vw < numVocalWindows; vw++) {
     const start = vw * vocalWindowSamples;
     const end = Math.min(start + vocalWindowSamples, length);
-    // Estimate vocal presence by mid-frequency energy ratio
-    // Simple approach: compare energy in 300-3000Hz band vs total
-    let totalE = 0, midE = 0;
-    const binSize = sampleRate / fftSize;
-    const midLow = Math.floor(300 / binSize);
-    const midHigh = Math.floor(3000 / binSize);
-
-    // Use simple windowed energy estimation in time domain
-    // (approximate: high energy variation in mid-freq = likely vocal)
-    let prev = 0;
-    let zeroCrossings = 0;
-    let rmsTotal = 0;
     const segLen = end - start;
+
+    // Measure mid-band energy ratio (vocal range: 300-3000Hz)
+    let midEnergy = 0, totalEnergy = 0;
     for (let i = start; i < end; i++) {
-      rmsTotal += mono[i] * mono[i];
+      midEnergy += midPass[i] * midPass[i];
+      totalEnergy += mono[i] * mono[i];
+    }
+    midEnergy = Math.sqrt(midEnergy / segLen);
+    totalEnergy = Math.sqrt(totalEnergy / segLen);
+
+    // Also check zero crossing rate for vocal frequency estimation
+    let zeroCrossings = 0;
+    let prev = 0;
+    for (let i = start; i < end; i++) {
       if (i > start && mono[i] * prev < 0) zeroCrossings++;
       prev = mono[i];
     }
-    rmsTotal = Math.sqrt(rmsTotal / segLen);
-    // Zero crossing rate correlates with frequency content
     const zcr = zeroCrossings / segLen * sampleRate;
-    // Vocal range: ZCR roughly 100-600 for speech/singing
-    if (zcr >= 100 && zcr <= 800 && rmsTotal > 0.02) {
-      vocalLikelihood[vw] = Math.min(1, rmsTotal * 5) * Math.min(1, Math.max(0, 1 - Math.abs(zcr - 400) / 400));
-    } else {
-      vocalLikelihood[vw] = 0;
+
+    // Spectral flatness approximation: vocal content has more harmonic structure
+    // (lower flatness) compared to noise/percussion (higher flatness)
+    let spectralVariance = 0;
+    const subWin = Math.floor(segLen / 20);
+    const subEnergies = [];
+    for (let sw = 0; sw < 20; sw++) {
+      let se = 0;
+      const ss = start + sw * subWin;
+      for (let i = ss; i < ss + subWin && i < end; i++) {
+        se += midPass[i] * midPass[i];
+      }
+      subEnergies.push(se / subWin);
     }
+    const meanSubE = subEnergies.reduce((a, b) => a + b, 0) / subEnergies.length;
+    for (const se of subEnergies) {
+      spectralVariance += (se - meanSubE) * (se - meanSubE);
+    }
+    spectralVariance = Math.sqrt(spectralVariance / subEnergies.length);
+    // High variance in mid-band energy = likely melodic/vocal content
+    const harmonicScore = meanSubE > 0 ? Math.min(1, spectralVariance / meanSubE * 2) : 0;
+
+    // Combined vocal likelihood: mid-band dominance + ZCR in vocal range + harmonic structure
+    const midRatio = totalEnergy > 0.001 ? midEnergy / totalEnergy : 0;
+    const zcrScore = (zcr >= 100 && zcr <= 800 && totalEnergy > 0.02) ?
+      Math.min(1, Math.max(0, 1 - Math.abs(zcr - 400) / 400)) : 0;
+
+    vocalLikelihood[vw] = midRatio * 0.4 + zcrScore * 0.3 + harmonicScore * 0.3;
   }
 
   onsets._vocalLikelihood = vocalLikelihood;
@@ -379,28 +483,58 @@ function estimateBPM(onsets, duration) {
   }
 
   // Histogram of intervals quantized to BPM range 60-200
+  // Weight intervals by amplitude (louder onsets = more reliable tempo indicators)
   const bpmCounts = {};
-  for (const iv of intervals) {
+  const amps = onsets._onsetAmplitudes;
+  for (let i = 0; i < intervals.length; i++) {
+    const iv = intervals[i];
     if (iv < 0.1 || iv > 2.0) continue;
+    // Weight by amplitude of both surrounding onsets
+    const weight = amps ? ((amps[i] || 0.3) + (amps[i + 1] || 0.3)) / 2 : 1;
     // Try multiplying/dividing to map to reasonable BPM range
     for (let mult = 1; mult <= 4; mult++) {
       const adjIv = iv * mult;
       const bpm = Math.round(60 / adjIv);
       if (bpm >= 70 && bpm <= 200) {
         const key = Math.round(bpm / 2) * 2; // round to nearest 2
-        bpmCounts[key] = (bpmCounts[key] || 0) + 1;
+        bpmCounts[key] = (bpmCounts[key] || 0) + weight;
       }
     }
   }
 
-  // Find most common BPM
-  let bestBPM = 120, bestCount = 0;
-  for (const [bpm, count] of Object.entries(bpmCounts)) {
-    if (count > bestCount) {
-      bestCount = count;
-      bestBPM = parseInt(bpm);
+  // Find top 3 BPM candidates
+  const candidates = Object.entries(bpmCounts)
+    .map(([bpm, count]) => ({ bpm: parseInt(bpm), count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3);
+
+  if (candidates.length === 0) return 120;
+
+  // Validate candidates: check how well onsets align to a grid at each BPM
+  let bestBPM = candidates[0].bpm;
+  let bestScore = -1;
+
+  for (const candidate of candidates) {
+    const bpmVal = candidate.bpm;
+    const beatInterval = 60 / bpmVal;
+    let alignScore = 0;
+
+    for (const t of onsets) {
+      // How close is this onset to the nearest beat grid position?
+      const nearestBeat = Math.round(t / beatInterval) * beatInterval;
+      const deviation = Math.abs(t - nearestBeat);
+      // Score inversely proportional to deviation (max 1 when on grid)
+      const devScore = Math.max(0, 1 - deviation / (beatInterval * 0.25));
+      const ampWeight = amps ? (amps[onsets.indexOf(t)] || 0.3) : 1;
+      alignScore += devScore * ampWeight;
+    }
+
+    if (alignScore > bestScore) {
+      bestScore = alignScore;
+      bestBPM = bpmVal;
     }
   }
+
   return bestBPM;
 }
 
@@ -411,10 +545,9 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
 
   // Waveform analysis thresholds
   const SILENCE_AMP_THRESHOLD = 0.05;  // below this = nearly silent section
-  const QUIET_BEAT_AMP = 0.08;         // minimum amplitude for obstacle placement
+  const QUIET_BEAT_AMP = 0.06;         // minimum amplitude for obstacle placement (lowered for sensitivity)
   const VOCAL_SONG_THRESHOLD = 0.08;   // overall vocal score >8% = vocal song
-  const VOCAL_SECTION_THRESHOLD = 0.15;// per-section vocal likelihood threshold
-  const AMP_PERCENTILE = 0.35;         // use 35th percentile (favor prominent peaks over median)
+  const VOCAL_SECTION_THRESHOLD = 0.12;// per-section vocal likelihood threshold (lowered for sensitivity)
 
   // Seeded random
   let seed = bpm * 1000 + Math.floor(duration) * 7;
@@ -428,6 +561,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   const ampHopSize = beats._ampHopSize;
   const ampSampleRate = beats._sampleRate;
   const onsetAmplitudes = beats._onsetAmplitudes;
+  const onsetIsMelody = beats._onsetIsMelody;
   const vocalLikelihood = beats._vocalLikelihood;
   const vocalWindowSec = beats._vocalWindowSec;
   const hasAmpData = ampEnvelope && ampEnvelope.length > 0;
@@ -467,56 +601,100 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   }
   const isVocalSong = totalVocalScore > VOCAL_SONG_THRESHOLD;
 
+  // ---- Beat quantization: snap onsets to nearest musical grid position ----
+  // This aligns obstacle placement with the actual beat grid for better musical feel
+  const quantizedBeats = [];
+  const gridSize = beatS / 4; // 16th note grid
+  for (let bi = 0; bi < beats.length; bi++) {
+    const t = beats[bi];
+    // Snap to nearest grid position
+    const gridPos = Math.round(t / gridSize) * gridSize;
+    // Only add if not duplicate (within 20ms)
+    if (quantizedBeats.length === 0 || Math.abs(gridPos - quantizedBeats[quantizedBeats.length - 1]._t) > 0.02) {
+      quantizedBeats.push({
+        _t: gridPos,
+        _origIdx: bi,
+        _amp: onsetAmplitudes ? (onsetAmplitudes[bi] || 0) : 0.5,
+        _isMelody: onsetIsMelody ? onsetIsMelody[bi] : 0
+      });
+    }
+  }
+
   // Analyze beat density to detect calm vs intense sections
   // Divide song into windows and count beats per window
   const windowSize = beatS * 8; // 2-bar windows
   const beatDensity = [];
   const maxT = duration;
   for (let w = 0; w < maxT; w += windowSize) {
-    const count = beats.filter(t => t >= w && t < w + windowSize).length;
-    beatDensity.push({ start: w, end: w + windowSize, count });
+    const count = quantizedBeats.filter(b => b._t >= w && b._t < w + windowSize).length;
+    // Also compute average amplitude in window for energy-based section detection
+    const avgAmp = getAvgAmplitude(w, w + windowSize);
+    beatDensity.push({ start: w, end: w + windowSize, count, avgAmp });
   }
   // Find median density for calm/intense threshold
   const sortedCounts = beatDensity.map(d => d.count).sort((a, b) => a - b);
   const medianDensity = sortedCounts[Math.floor(sortedCounts.length / 2)] || 1;
+  // Also compute amplitude-based intensity
+  const sortedAmps = beatDensity.map(d => d.avgAmp).sort((a, b) => a - b);
+  const medianAmp = sortedAmps[Math.floor(sortedAmps.length / 2)] || 0.3;
 
   function isCalmAt(t) {
     const idx = Math.floor(t / windowSize);
     if (idx >= beatDensity.length) return true;
-    return beatDensity[idx].count < medianDensity * 0.7;
+    // Use both beat density AND amplitude for more accurate calm detection
+    const densityCalm = beatDensity[idx].count < medianDensity * 0.7;
+    const ampCalm = beatDensity[idx].avgAmp < medianAmp * 0.6;
+    return densityCalm || ampCalm;
   }
 
   // Detect silent/near-silent sections using waveform amplitude
   function isSilentAt(t) {
-    // Check beat density first
     const idx = Math.floor(t / windowSize);
     if (idx >= beatDensity.length) return true;
     if (beatDensity[idx].count <= 1) return true;
-    // Also check waveform amplitude — if average amplitude in this window is very low
     if (hasAmpData) {
       const wStart = idx * windowSize;
       const wEnd = wStart + windowSize;
       const avgAmp = getAvgAmplitude(wStart, wEnd);
-      if (avgAmp < SILENCE_AMP_THRESHOLD) return true; // nearly silent waveform
+      if (avgAmp < SILENCE_AMP_THRESHOLD) return true;
     }
     return false;
   }
 
-  // Determine song section based on position (intro, calm, before-last-chorus, outro)
+  // ---- Improved section detection using energy contour ----
+  // Detect intro/outro by amplitude ramp-up/ramp-down
   function getSectionAt(t) {
     const progress = t / duration;
-    if (progress < 0.10) return 'intro';
-    if (progress >= 0.90) return 'outro';
-    if (progress >= 0.75 && progress < 0.80) return 'before_last_chorus';
-    return isCalmAt(t) ? 'calm' : 'intense';
+    const localAmp = getAmplitudeAt(t);
+
+    // First few seconds or very quiet start = intro
+    if (progress < 0.08 || (progress < 0.15 && localAmp < medianAmp * 0.4)) return 'intro';
+    // Last section or very quiet end = outro
+    if (progress >= 0.92 || (progress >= 0.85 && localAmp < medianAmp * 0.4)) return 'outro';
+    // Before last high-energy section
+    if (progress >= 0.72 && progress < 0.78 && isCalmAt(t)) return 'before_last_chorus';
+
+    // Use amplitude contour for more accurate section detection
+    if (isCalmAt(t)) return 'calm';
+    return 'intense';
   }
 
-  // Compute amplitude threshold for emphasis detection
-  // Beats with amplitude significantly above their local neighborhood are "emphasized"
-  let ampMedian = 0.5;
-  if (hasAmpData && onsetAmplitudes && onsetAmplitudes.length > 0) {
-    const sorted = [...onsetAmplitudes].sort((a, b) => a - b);
-    ampMedian = sorted[Math.floor(sorted.length * AMP_PERCENTILE)] || 0.3;
+  // ---- Compute local amplitude context for each onset ----
+  // Instead of a single global percentile, use local context windows
+  function getLocalAmpThreshold(t) {
+    // Get amplitude in a ±4 beat window around this time
+    const windowHalf = beatS * 4;
+    const tStart = Math.max(0, t - windowHalf);
+    const tEnd = Math.min(duration, t + windowHalf);
+    // Collect amplitudes of nearby onsets
+    const nearbyAmps = [];
+    for (const qb of quantizedBeats) {
+      if (qb._t >= tStart && qb._t <= tEnd) nearbyAmps.push(qb._amp);
+    }
+    if (nearbyAmps.length < 3) return 0.1; // too few neighbors, accept most
+    nearbyAmps.sort((a, b) => a - b);
+    // Use 25th percentile of local amplitudes as threshold
+    return nearbyAmps[Math.floor(nearbyAmps.length * 0.25)] || 0.1;
   }
 
   // Skip first CHART_START_OFFSET seconds, stop 2s before end
@@ -524,34 +702,39 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   const endT = duration - 2.0;
   let lastType = -1;
   let lastTime = -1;
-  // HARD mode allows tighter gaps (16th note density)
-  const minGap = difficulty === 'HARD' ? beatS * 0.2 : beatS * 0.4;
+  // Minimum gap based on difficulty (prevents overwhelming density)
+  const minGap = difficulty === 'HARD' ? beatS * 0.2 : beatS * 0.35;
 
-  for (let bi = 0; bi < beats.length; bi++) {
-    const t = beats[bi];
+  for (let qi = 0; qi < quantizedBeats.length; qi++) {
+    const qb = quantizedBeats[qi];
+    const t = qb._t;
+    const bi = qb._origIdx;
     if (t < startT || t > endT) continue;
     if (t - lastTime < minGap) continue;
 
     // Skip silent sections — no obstacles in silent parts
     if (isSilentAt(t)) continue;
 
-    // Waveform emphasis filter: prefer beats at emphasized (prominent) waveform peaks
+    // ---- Improved amplitude filtering using local context ----
     if (hasAmpData && onsetAmplitudes) {
-      const beatAmp = onsetAmplitudes[bi] || 0;
+      const beatAmp = qb._amp;
       const localAmp = getAmplitudeAt(t);
       const isVocalSection = isVocalSong && hasVocalsAt(t);
+      const isMelodyOnset = qb._isMelody;
+      const localThreshold = getLocalAmpThreshold(t);
 
-      if (isVocalSection) {
-        // Vocal section: follow vocal melody — accept most beats since beat detection
-        // already captured melody onsets; skip only very weak beats
-        if (beatAmp < ampMedian * 0.3 && localAmp < QUIET_BEAT_AMP) continue;
+      if (isMelodyOnset) {
+        // Melody onset: keep almost all — these are the most musically relevant
+        if (beatAmp < localThreshold * 0.2 && localAmp < QUIET_BEAT_AMP) continue;
+      } else if (isVocalSection) {
+        // Vocal section: keep most beats, skip only very weak ones
+        if (beatAmp < localThreshold * 0.3 && localAmp < QUIET_BEAT_AMP) continue;
       } else if (isVocalSong && !isVocalSection) {
-        // Instrumental interlude in a vocal song: emphasize waveform peaks more
-        if (beatAmp < ampMedian * 0.6 && rand() < 0.5) continue;
+        // Instrumental interlude in vocal song: moderate filtering
+        if (beatAmp < localThreshold * 0.5 && rand() < 0.4) continue;
       } else {
-        // Fully instrumental song: strong waveform emphasis
-        // Skip beats that are not significantly above the local average
-        if (beatAmp < ampMedian * 0.5 && rand() < 0.4) continue;
+        // Fully instrumental: filter by local amplitude context
+        if (beatAmp < localThreshold * 0.4 && rand() < 0.35) continue;
       }
     }
 
@@ -571,12 +754,25 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       else typeIdx = r < starChance + 0.55 ? 2 : 3; // ARCH or BLOCK
     } else {
       // Intense sections: action obstacles, stars ~5%
-      if (r < 0.24) typeIdx = 0;       // PYLON_R
-      else if (r < 0.48) typeIdx = 1;  // PYLON_L
-      else if (r < 0.72) typeIdx = 2;  // ARCH
-      else if (r < 0.95) typeIdx = 3;  // BLOCK
-      else if (r < 0.975) typeIdx = 4; // STAR_R (rare)
-      else typeIdx = 5;                // STAR_L (rare)
+      // Use melody/percussion classification to influence obstacle type
+      const isMelodyOnset = qb._isMelody;
+      if (isMelodyOnset) {
+        // Melody beats: favor side dodges (pylons) for flow
+        if (r < 0.30) typeIdx = 0;       // PYLON_R
+        else if (r < 0.60) typeIdx = 1;  // PYLON_L
+        else if (r < 0.78) typeIdx = 2;  // ARCH
+        else if (r < 0.95) typeIdx = 3;  // BLOCK
+        else if (r < 0.975) typeIdx = 4; // STAR_R
+        else typeIdx = 5;                // STAR_L
+      } else {
+        // Percussion beats: favor jumps/ducks for impact
+        if (r < 0.20) typeIdx = 0;       // PYLON_R
+        else if (r < 0.40) typeIdx = 1;  // PYLON_L
+        else if (r < 0.65) typeIdx = 3;  // BLOCK (jump!)
+        else if (r < 0.90) typeIdx = 2;  // ARCH (duck!)
+        else if (r < 0.95) typeIdx = 4;  // STAR_R
+        else typeIdx = 5;                // STAR_L
+      }
     }
 
     // Avoid same consecutive type
@@ -595,23 +791,24 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     });
   }
 
-  // HARD mode: insert additional 16th-note obstacles between existing beats
+  // HARD mode: insert additional obstacles between existing beats at musically relevant points
   if (difficulty === 'HARD') {
-    const sixteenthS = beatS / 4; // 16th note duration
+    const eighthS = beatS / 2; // 8th note duration
     const extraObs = [];
     for (let i = 0; i < obstacles.length - 1; i++) {
       const gap = obstacles[i + 1].time - obstacles[i].time;
-      // If gap is large enough, add midpoint obstacles
-      if (gap > sixteenthS * 2.5) {
+      // If gap is large enough, add midpoint obstacle snapped to grid
+      if (gap > eighthS * 1.5) {
         const midT = obstacles[i].time + gap * 0.5;
-        if (midT > startT && midT < endT && !isSilentAt(midT)) {
-          // Also check waveform amplitude for extra obstacles
-          const midAmp = hasAmpData ? getAmplitudeAt(midT) : 0.5;
-          if (midAmp < QUIET_BEAT_AMP) continue; // skip if waveform is too quiet
-          let typeIdx = Math.floor(rand() * 4); // only action types (0-3), no stars
+        // Snap to nearest 16th note grid
+        const snappedMidT = Math.round(midT / gridSize) * gridSize;
+        if (snappedMidT > startT && snappedMidT < endT && !isSilentAt(snappedMidT)) {
+          const midAmp = hasAmpData ? getAmplitudeAt(snappedMidT) : 0.5;
+          if (midAmp < QUIET_BEAT_AMP) continue;
+          let typeIdx = Math.floor(rand() * 4);
           if (OBS_TYPES[typeIdx] === obstacles[i].type) typeIdx = (typeIdx + 1) % 4;
           extraObs.push({
-            time: midT,
+            time: snappedMidT,
             type: OBS_TYPES[typeIdx],
             judged: false,
             judgment: null,
