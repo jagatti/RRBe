@@ -339,17 +339,22 @@ function detectBeats(audioBuffer) {
     const t = (w * hopSize) / sampleRate;
 
     // Combined onset detection: weighted sum of band fluxes
-    // Mid-band (melody) gets highest weight for better melody tracking
-    const combinedFlux = fluxLow[w] * 0.25 + fluxMid[w] * 0.50 + fluxHigh[w] * 0.25;
-    const combinedAvg = avgLow * 0.25 + avgMid * 0.50 + avgHigh * 0.25;
+    // Mid-band (melody/vocal) gets highest weight — these are the sounds
+    // that humans intuitively recognise and want to "tap along" with
+    const combinedFlux = fluxLow[w] * 0.20 + fluxMid[w] * 0.55 + fluxHigh[w] * 0.25;
+    const combinedAvg = avgLow * 0.20 + avgMid * 0.55 + avgHigh * 0.25;
 
-    // Also check total energy onset (backward compatibility)
-    const totalOnset = energyTotal[w] > avgTotal * threshold && energyTotal[w] > 0.001;
+    // Melody-band specific onset: strong mid-band flux alone qualifies
+    const melodyFluxOnset = fluxMid[w] > avgMid * (threshold * 0.9) && fluxMid[w] > 0.0002;
 
-    // Onset if combined flux exceeds threshold OR total energy onset detected
+    // Also check total energy onset — but require higher threshold so
+    // only truly prominent beats (kick hits, big chord stabs) survive
+    const totalOnset = energyTotal[w] > avgTotal * (threshold * 1.2) && energyTotal[w] > 0.002;
+
+    // Onset if combined flux exceeds threshold OR melody/total onset detected
     const fluxOnset = combinedFlux > combinedAvg * threshold && combinedFlux > 0.0001;
 
-    if ((fluxOnset || totalOnset) && t - lastOnsetTime > 0.10) {
+    if ((fluxOnset || melodyFluxOnset || totalOnset) && t - lastOnsetTime > 0.10) {
       onsets.push(t);
       lastOnsetTime = t;
     }
@@ -660,6 +665,21 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   const sortedAmps = beatDensity.map(d => d.avgAmp).sort((a, b) => a - b);
   const medianAmp = sortedAmps[Math.floor(sortedAmps.length / 2)] || 0.3;
 
+  // Compute intensity score (0-1) for each window for dynamic density
+  for (let i = 0; i < beatDensity.length; i++) {
+    const d = beatDensity[i];
+    const densityScore = medianDensity > 0 ? d.count / medianDensity : 1;
+    const ampScore = medianAmp > 0 ? d.avgAmp / medianAmp : 1;
+    // Combine density and amplitude, clamp to 0-2
+    d.intensity = Math.min(2, densityScore * 0.4 + ampScore * 0.6);
+  }
+
+  function getIntensityAt(t) {
+    const idx = Math.floor(t / windowSize);
+    if (idx >= beatDensity.length) return 0;
+    return beatDensity[idx].intensity;
+  }
+
   function isCalmAt(t) {
     const idx = Math.floor(t / windowSize);
     if (idx >= beatDensity.length) return true;
@@ -667,6 +687,12 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     const densityCalm = beatDensity[idx].count < medianDensity * 0.7;
     const ampCalm = beatDensity[idx].avgAmp < medianAmp * 0.6;
     return densityCalm || ampCalm;
+  }
+
+  function isIntenseAt(t) {
+    const idx = Math.floor(t / windowSize);
+    if (idx >= beatDensity.length) return false;
+    return beatDensity[idx].count > medianDensity * 1.2 && beatDensity[idx].avgAmp > medianAmp * 1.1;
   }
 
   // Detect silent/near-silent sections using waveform amplitude
@@ -726,41 +752,90 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   let lastTime = -1;
   // Minimum gap based on difficulty, scaled by scroll speed
   // Higher scroll speed = wider minimum gap = more visual spacing between obstacles
-  // This ensures that increasing scroll speed makes obstacles more spread out and readable
-  const baseMinGap = difficulty === 'HARD' ? beatS * 0.35 : beatS * 0.50;
-  const minGap = baseMinGap * Math.max(1.0, scrollSpeedMult);
+  const baseMinGapHard = beatS * 0.35;
+  const baseMinGapNormal = beatS * 0.50;
+  const scrollGapMult = Math.max(1.0, scrollSpeedMult);
+
+  // Dynamic minimum gap: tighter in intense sections, wider in calm sections
+  // This creates the pacing variation players want
+  function getDynamicMinGap(t) {
+    const section = getSectionAt(t);
+    const intensity = getIntensityAt(t);
+    let base;
+    if (section === 'intro' || section === 'outro') {
+      // Very wide gaps in intro/outro for breathing room
+      base = difficulty === 'HARD' ? beatS * 0.65 : beatS * 0.90;
+    } else if (section === 'calm' || section === 'before_last_chorus') {
+      // Wide gaps in calm sections
+      base = difficulty === 'HARD' ? beatS * 0.50 : beatS * 0.70;
+    } else if (isIntenseAt(t)) {
+      // Tight gaps in intense sections for density
+      base = difficulty === 'HARD' ? baseMinGapHard : baseMinGapNormal;
+    } else {
+      // Default moderate
+      base = difficulty === 'HARD' ? beatS * 0.42 : beatS * 0.60;
+    }
+    return base * scrollGapMult;
+  }
+
+  // Track consecutive obstacle count for periodic breathing gaps
+  let consecutiveCount = 0;
+  const BREATHING_GAP_INTERVAL = difficulty === 'HARD' ? 8 : 6; // Insert a rest every N obstacles
+  const BREATHING_GAP_DURATION = beatS * 1.5; // 1.5 beats of rest
 
   for (let qi = 0; qi < quantizedBeats.length; qi++) {
     const qb = quantizedBeats[qi];
     const t = qb._t;
     const bi = qb._origIdx;
     if (t < startT || t > endT) continue;
-    if (t - lastTime < minGap) continue;
+
+    // Dynamic minimum gap based on section
+    const currentMinGap = getDynamicMinGap(t);
+    if (t - lastTime < currentMinGap) continue;
+
+    // Periodic breathing gaps — even in dense sections, insert brief rests
+    // so the pattern doesn't feel monotonous
+    if (consecutiveCount >= BREATHING_GAP_INTERVAL && !isCalmAt(t)) {
+      if (t - lastTime < BREATHING_GAP_DURATION * scrollGapMult) continue;
+      consecutiveCount = 0; // reset after breathing gap
+    }
 
     // Skip silent sections — no obstacles in silent parts
     if (isSilentAt(t)) continue;
 
     // ---- Improved amplitude filtering: strongly favor melody onsets ----
+    // The goal: keep beats that a human would naturally tap along to —
+    // prominent melody notes, strong drum hits, vocal phrases
     if (hasAmpData && onsetAmplitudes) {
       const beatAmp = qb._amp;
       const localAmp = getAmplitudeAt(t);
       const isVocalSection = isVocalSong && hasVocalsAt(t);
       const isMelodyOnset = qb._isMelody;
       const localThreshold = getLocalAmpThreshold(t);
+      const intense = isIntenseAt(t);
 
       if (isMelodyOnset) {
         // Melody onset: keep nearly all — these are the core musical moments
-        if (beatAmp < localThreshold * 0.15 && localAmp < QUIET_BEAT_AMP) continue;
+        // that players can intuitively identify
+        if (beatAmp < localThreshold * 0.12 && localAmp < QUIET_BEAT_AMP) continue;
       } else if (isVocalSection) {
-        // Vocal section: moderately prioritize
-        if (beatAmp < localThreshold * 0.3 && localAmp < QUIET_BEAT_AMP) continue;
+        // Vocal section: keep melody-like onsets, filter weak percussion
+        if (beatAmp < localThreshold * 0.25 && localAmp < QUIET_BEAT_AMP) continue;
       } else if (isVocalSong && !isVocalSection) {
-        // Instrumental interlude in vocal song: stronger filtering of non-melody beats
-        if (beatAmp < localThreshold * 0.6 && rand() < 0.5) continue;
+        // Instrumental interlude in vocal song: filter non-melody beats more
+        // so only strong, prominent hits survive — easier to "hear"
+        if (beatAmp < localThreshold * 0.55) continue;
+        if (beatAmp < localThreshold * 0.7 && rand() < 0.4) continue;
       } else {
-        // Fully instrumental: filter weak percussion-only onsets more aggressively
-        if (beatAmp < localThreshold * 0.5 && rand() < 0.45) continue;
+        // Fully instrumental: keep only prominent, rhythmically obvious beats
+        // Filter out weak background percussion that players can't intuitively follow
+        if (beatAmp < localThreshold * 0.45) continue;
+        if (beatAmp < localThreshold * 0.65 && rand() < 0.35) continue;
       }
+
+      // In calm sections, additionally thin out non-melody percussion
+      // so obstacles clearly correspond to the main musical elements
+      if (isCalmAt(t) && !isMelodyOnset && rand() < 0.35) continue;
     }
 
     const r = rand();
@@ -822,6 +897,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     }
     lastType = typeIdx;
     lastTime = t;
+    consecutiveCount++;
 
     obstacles.push({
       time: t,
@@ -833,16 +909,19 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   }
 
   // HARD mode: insert additional obstacles between existing beats at musically relevant points
+  // Only in intense sections — don't fill in calm sections which should stay sparse
   if (difficulty === 'HARD') {
     const eighthS = beatS / 2; // 8th note duration
     const extraObs = [];
-    // Extra obstacles must also respect minimum gap (use slightly tighter for HARD extras)
-    const extraMinGap = minGap * 0.8;
     for (let i = 0; i < obstacles.length - 1; i++) {
       const gap = obstacles[i + 1].time - obstacles[i].time;
+      const midT = obstacles[i].time + gap * 0.5;
+      // Only insert extras in intense sections
+      if (!isIntenseAt(midT)) continue;
+      // Extra obstacles must also respect minimum gap
+      const extraMinGap = getDynamicMinGap(midT) * 0.8;
       // If gap is large enough and respects minimum spacing
       if (gap > Math.max(eighthS * 1.5, extraMinGap * 2)) {
-        const midT = obstacles[i].time + gap * 0.5;
         // Snap to nearest 16th note grid
         const snappedMidT = Math.round(midT / gridSize) * gridSize;
         // Ensure the inserted obstacle respects minimum gap from both neighbors
@@ -869,8 +948,8 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
 
   // Final pass: enforce minimum visual spacing by removing obstacles that are too close
   obstacles.sort((a, b) => a.time - b.time);
-  const finalMinGap = minGap * 0.9;
   for (let i = obstacles.length - 1; i > 0; i--) {
+    const finalMinGap = getDynamicMinGap(obstacles[i].time) * 0.9;
     if (obstacles[i].time - obstacles[i - 1].time < finalMinGap) {
       // Keep the one with higher musical relevance (melody onset preferred)
       // For simplicity, remove the later one
