@@ -768,7 +768,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   // Minimum gap based on difficulty, scaled by scroll speed
   // Scroll speed only affects visual spacing, NOT obstacle count
   const baseMinGapHard = beatS * 0.22;    // HARD: tight 16th-note density
-  const baseMinGapExpert = beatS * 0.15;  // EXPERT: 24th-note density (beatS/6 ≈ 0.167)
+  const baseMinGapExpert = beatS / 6;     // EXPERT: 24th-note density (8th-note triplet)
   const baseMinGapNormal = beatS * 0.60;
 
   // Dynamic minimum gap: tighter in intense sections, wider in calm sections
@@ -927,7 +927,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   // HARD fills in 16th-note gaps; EXPERT fills in 24th-note (triplet) gaps in intense sections
   if (difficulty === 'HARD' || difficulty === 'EXPERT') {
     const sixteenthS = beatS / 4; // 16th note duration
-    const twentyfourthS = beatS / 6; // 24th note (16th-note triplet) duration
+    const twentyfourthS = beatS / 6; // 24th note (8th-note triplet) duration
     const insertGridS = difficulty === 'EXPERT' ? twentyfourthS : sixteenthS;
     const extraObs = [];
     for (let i = 0; i < obstacles.length - 1; i++) {
