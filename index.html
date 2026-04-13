@@ -200,6 +200,7 @@ let isCustomSong = false;       // true when playing a dropped MP3
 let mp3DropZoneHover = false;   // drag hover visual feedback
 let mp3LoadingMsg = '';         // loading status text
 let customDifficulty = 'NORMAL'; // 'NORMAL', 'HARD', or 'EXPERT' for custom MP3 songs
+let customDetectedBPM = null;   // auto-detected BPM (kept for display even after user override)
 
 
 
@@ -1007,6 +1008,7 @@ function handleMP3Drop(file) {
       const duration = buffer.duration;
       const beats = detectBeats(buffer);
       const bpm = estimateBPM(beats, duration);
+      customDetectedBPM = bpm;
       customSongBeats = beats;
 
       // Calculate bars from duration
@@ -1046,6 +1048,18 @@ function handleMP3Drop(file) {
     });
   };
   reader.readAsArrayBuffer(file);
+}
+
+// Update custom song BPM (user override)
+function updateCustomBPM(newBPM) {
+  if (songSelectIndex < 4 || !customAudioBuffer) return;
+  const song = SONGS[songSelectIndex];
+  song.bpm = newBPM;
+  const beatSec = 60 / newBPM;
+  const totalBeats = Math.floor(customAudioBuffer.duration / beatSec);
+  song.bars = Math.max(8, Math.floor(totalBeats / 4));
+  const autoLabel = customDetectedBPM ? ' (自動検出: ' + customDetectedBPM + ')' : '';
+  song.desc = 'BPM ' + newBPM + autoLabel + ' — カスタムMP3';
 }
 
 
@@ -1767,6 +1781,17 @@ window.addEventListener('keydown', (e) => {
     // Toggle difficulty for custom songs
     if (e.code === 'KeyD' && songSelectIndex >= 4) {
       customDifficulty = customDifficulty === 'NORMAL' ? 'HARD' : customDifficulty === 'HARD' ? 'EXPERT' : 'NORMAL';
+    }
+    // BPM adjustment for custom songs
+    if (e.code === 'KeyB' && songSelectIndex >= 4 && customAudioBuffer) {
+      const currentBPM = SONGS[songSelectIndex].bpm;
+      const input = prompt('BPMを入力してください（自動検出: ' + (customDetectedBPM || currentBPM) + '）', String(currentBPM));
+      if (input !== null) {
+        const newBPM = parseInt(input, 10);
+        if (!isNaN(newBPM) && newBPM >= 30 && newBPM <= 300) {
+          updateCustomBPM(newBPM);
+        }
+      }
     }
   } else if (gameState === 'START' && e.code === 'Space') {
     startGame();
@@ -3608,7 +3633,7 @@ function drawSongSelectScreen() {
     ctx.fillText('難易度: ' + diffLabel, VX, diffY);
     ctx.fillStyle = 'rgba(0,255,136,0.5)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('Dキーで難易度変更', VX, diffY + 18);
+    ctx.fillText('Dキーで難易度変更 ／ Bキーで BPM調整', VX, diffY + 18);
   }
 
   // Controls reminder
