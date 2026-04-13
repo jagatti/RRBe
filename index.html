@@ -199,7 +199,7 @@ let customSongBeats = null;     // array of beat times (seconds)
 let isCustomSong = false;       // true when playing a dropped MP3
 let mp3DropZoneHover = false;   // drag hover visual feedback
 let mp3LoadingMsg = '';         // loading status text
-let customDifficulty = 'NORMAL'; // 'NORMAL' or 'HARD' for custom MP3 songs
+let customDifficulty = 'NORMAL'; // 'NORMAL', 'HARD', or 'EXPERT' for custom MP3 songs
 
 
 
@@ -362,8 +362,8 @@ function detectBeats(audioBuffer) {
     // Onset if combined flux exceeds threshold OR melody/total onset detected
     const fluxOnset = combinedFlux > combinedAvg * threshold && combinedFlux > 0.0001;
 
-    // Minimum onset interval: 80ms allows 16th notes at ~190 BPM
-    if ((fluxOnset || melodyFluxOnset || totalOnset) && t - lastOnsetTime > 0.08) {
+    // Minimum onset interval: 40ms allows 32nd notes at ~190 BPM
+    if ((fluxOnset || melodyFluxOnset || totalOnset) && t - lastOnsetTime > 0.04) {
       onsets.push(t);
       lastOnsetTime = t;
     }
@@ -584,6 +584,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   const VOCAL_SECTION_THRESHOLD = 0.10;// per-section vocal likelihood threshold
   const CALM_NONMELODY_THIN_RATE = 0.45;// probability of removing non-melody beats in calm sections
   const BREATHING_GAP_HARD = 20;       // consecutive obstacles before forced rest (HARD)
+  const BREATHING_GAP_EXPERT = 28;     // consecutive obstacles before forced rest (EXPERT)
   const BREATHING_GAP_NORMAL = 6;      // consecutive obstacles before forced rest (NORMAL)
 
   // Seeded random
@@ -642,7 +643,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   // ---- Beat quantization: snap onsets to nearest musical grid position ----
   // This aligns obstacle placement with the actual beat grid for better musical feel
   const quantizedBeats = [];
-  const gridSize = beatS / 4; // 16th note grid
+  const gridSize = beatS / 8; // 32nd note grid
   for (let bi = 0; bi < beats.length; bi++) {
     const t = beats[bi];
     // Snap to nearest grid position
@@ -767,6 +768,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   // Minimum gap based on difficulty, scaled by scroll speed
   // Scroll speed only affects visual spacing, NOT obstacle count
   const baseMinGapHard = beatS * 0.22;    // HARD: tight 16th-note density
+  const baseMinGapExpert = beatS * 0.15;  // EXPERT: 24th-note density (beatS/6 ≈ 0.167)
   const baseMinGapNormal = beatS * 0.60;
 
   // Dynamic minimum gap: tighter in intense sections, wider in calm sections
@@ -777,24 +779,24 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     let base;
     if (section === 'intro' || section === 'outro') {
       // Very wide gaps in intro/outro for breathing room
-      base = difficulty === 'HARD' ? beatS * 0.55 : beatS * 1.00;
+      base = difficulty === 'EXPERT' ? beatS * 0.45 : difficulty === 'HARD' ? beatS * 0.55 : beatS * 1.00;
     } else if (section === 'calm' || section === 'before_last_chorus') {
       // Wide gaps in calm sections — clear contrast with intense parts
-      base = difficulty === 'HARD' ? beatS * 0.45 : beatS * 0.80;
+      base = difficulty === 'EXPERT' ? beatS * 0.35 : difficulty === 'HARD' ? beatS * 0.45 : beatS * 0.80;
     } else if (isIntenseAt(t)) {
       // Tight gaps in intense sections — this is where the challenge lives
-      base = difficulty === 'HARD' ? baseMinGapHard : baseMinGapNormal;
+      base = difficulty === 'EXPERT' ? baseMinGapExpert : difficulty === 'HARD' ? baseMinGapHard : baseMinGapNormal;
     } else {
       // Default moderate
-      base = difficulty === 'HARD' ? beatS * 0.35 : beatS * 0.70;
+      base = difficulty === 'EXPERT' ? beatS * 0.25 : difficulty === 'HARD' ? beatS * 0.35 : beatS * 0.70;
     }
     return base;
   }
 
   // Track consecutive obstacle count for periodic breathing gaps
   let consecutiveCount = 0;
-  const BREATHING_GAP_INTERVAL = difficulty === 'HARD' ? BREATHING_GAP_HARD : BREATHING_GAP_NORMAL;
-  const BREATHING_GAP_DURATION = difficulty === 'HARD' ? beatS * 1.0 : beatS * 1.5;
+  const BREATHING_GAP_INTERVAL = difficulty === 'EXPERT' ? BREATHING_GAP_EXPERT : difficulty === 'HARD' ? BREATHING_GAP_HARD : BREATHING_GAP_NORMAL;
+  const BREATHING_GAP_DURATION = difficulty === 'EXPERT' ? beatS * 0.8 : difficulty === 'HARD' ? beatS * 1.0 : beatS * 1.5;
 
   for (let qi = 0; qi < quantizedBeats.length; qi++) {
     const qb = quantizedBeats[qi];
@@ -862,7 +864,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       const baseStarChance = (section === 'before_last_chorus') ? 0.50
                        : (section === 'intro' || section === 'outro') ? 0.45
                        : 0.40;
-      const starChance = difficulty === 'HARD' ? Math.min(baseStarChance, 0.15) : baseStarChance;
+      const starChance = (difficulty === 'HARD' || difficulty === 'EXPERT') ? Math.min(baseStarChance, 0.15) : baseStarChance;
       if (r < starChance / 2) typeIdx = 4;       // STAR_R
       else if (r < starChance) typeIdx = 5;       // STAR_L
       else if (r < starChance + 0.20) typeIdx = 0; // PYLON_R
@@ -898,8 +900,8 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
         else typeIdx = 2;                // ARCH (duck!)
       }
 
-      // In non-HARD mode, add small star chance in intense sections
-      if (difficulty !== 'HARD') {
+      // In non-HARD/EXPERT mode, add small star chance in intense sections
+      if (difficulty !== 'HARD' && difficulty !== 'EXPERT') {
         if (r > 0.95) typeIdx = r < 0.975 ? 4 : 5; // ~5% STAR in intense sections
       }
     }
@@ -921,26 +923,28 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     });
   }
 
-  // HARD mode: insert additional obstacles between existing beats at musically relevant points
-  // Fills in 16th-note gaps in intense sections for sustained fast patterns
-  if (difficulty === 'HARD') {
+  // HARD/EXPERT mode: insert additional obstacles between existing beats at musically relevant points
+  // HARD fills in 16th-note gaps; EXPERT fills in 24th-note (triplet) gaps in intense sections
+  if (difficulty === 'HARD' || difficulty === 'EXPERT') {
     const sixteenthS = beatS / 4; // 16th note duration
-    const eighthS = beatS / 2;    // 8th note duration
+    const twentyfourthS = beatS / 6; // 24th note (16th-note triplet) duration
+    const insertGridS = difficulty === 'EXPERT' ? twentyfourthS : sixteenthS;
     const extraObs = [];
     for (let i = 0; i < obstacles.length - 1; i++) {
       const gap = obstacles[i + 1].time - obstacles[i].time;
       const midT = obstacles[i].time + gap * 0.5;
       // Only insert extras in intense sections
       if (!isIntenseAt(midT)) continue;
-      // Use tighter minimum gap for HARD extras
-      const extraMinGap = sixteenthS * 0.9;
+      // Use tighter minimum gap for extras
+      const extraMinGap = insertGridS * 0.9;
       // If gap is large enough for at least one extra obstacle
-      if (gap > sixteenthS * 2.2) {
-        // Try to insert multiple obstacles at 16th-note grid positions
-        const numInserts = Math.min(4, Math.floor(gap / (sixteenthS * 1.1)) - 1);
+      if (gap > insertGridS * 2.2) {
+        // Try to insert multiple obstacles at grid positions
+        const maxInserts = difficulty === 'EXPERT' ? 5 : 4;
+        const numInserts = Math.min(maxInserts, Math.floor(gap / (insertGridS * 1.1)) - 1);
         for (let ins = 1; ins <= numInserts; ins++) {
           const insertT = obstacles[i].time + gap * (ins / (numInserts + 1));
-          // Snap to nearest 16th note grid
+          // Snap to nearest grid position (32nd note grid)
           const snappedT = Math.round(insertT / gridSize) * gridSize;
           // Check spacing from all existing and newly inserted obstacles
           const gapBefore = snappedT - obstacles[i].time;
@@ -974,8 +978,8 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
   // Final pass: enforce minimum visual spacing by removing obstacles that are too close
   obstacles.sort((a, b) => a.time - b.time);
   for (let i = obstacles.length - 1; i > 0; i--) {
-    // In HARD mode, use tighter enforcement so 16th-note runs survive
-    const enforceMult = difficulty === 'HARD' ? 0.65 : 0.90;
+    // In HARD/EXPERT mode, use tighter enforcement so dense note runs survive
+    const enforceMult = difficulty === 'EXPERT' ? 0.55 : difficulty === 'HARD' ? 0.65 : 0.90;
     const finalMinGap = getDynamicMinGap(obstacles[i].time) * enforceMult;
     if (obstacles[i].time - obstacles[i - 1].time < finalMinGap) {
       obstacles.splice(i, 1);
@@ -1762,7 +1766,7 @@ window.addEventListener('keydown', (e) => {
     }
     // Toggle difficulty for custom songs
     if (e.code === 'KeyD' && songSelectIndex >= 4) {
-      customDifficulty = customDifficulty === 'NORMAL' ? 'HARD' : 'NORMAL';
+      customDifficulty = customDifficulty === 'NORMAL' ? 'HARD' : customDifficulty === 'HARD' ? 'EXPERT' : 'NORMAL';
     }
   } else if (gameState === 'START' && e.code === 'Space') {
     startGame();
@@ -3600,7 +3604,7 @@ function drawSongSelectScreen() {
     const diffY = 516;
     ctx.fillStyle = '#00ff88';
     ctx.font = 'bold 16px sans-serif';
-    const diffLabel = customDifficulty === 'HARD' ? '🔥 ハード（16分音符）' : '🎵 ノーマル';
+    const diffLabel = customDifficulty === 'EXPERT' ? '💀 エキスパート（24分音符）' : customDifficulty === 'HARD' ? '🔥 ハード（16分音符）' : '🎵 ノーマル';
     ctx.fillText('難易度: ' + diffLabel, VX, diffY);
     ctx.fillStyle = 'rgba(0,255,136,0.5)';
     ctx.font = '12px sans-serif';
