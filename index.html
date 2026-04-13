@@ -1206,7 +1206,9 @@ function createYTPlayer(videoId, onReady) {
         if (onReady) onReady(event.target);
       },
       onError: function(event) {
-        ytLoadingMsg = '❌ 動画の読み込みに失敗しました (エラー: ' + event.data + ')';
+        const errMap = { 2: '無効なパラメータ', 5: 'HTML5再生エラー', 100: '動画が見つかりません', 101: '再生が許可されていません', 150: '再生が許可されていません' };
+        const errMsg = errMap[event.data] || 'エラー ' + event.data;
+        ytLoadingMsg = '❌ ' + errMsg;
         setTimeout(function() { ytLoadingMsg = ''; }, 3000);
       }
     }
@@ -1238,6 +1240,9 @@ function handleYouTubeUrl(url) {
       const defaultBPM = 120;
       const bpmInput = prompt('BPMを入力してください（わからなければそのままOK）:', String(defaultBPM));
       const bpm = Math.max(60, Math.min(300, parseInt(bpmInput) || defaultBPM));
+      if (!bpmInput || parseInt(bpmInput) !== bpm) {
+        ytLoadingMsg = 'BPM ' + bpm + ' で生成中...';
+      }
 
       // Generate virtual beats
       ytSongBeats = createVirtualBeats(bpm, duration);
