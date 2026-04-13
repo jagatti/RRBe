@@ -35,7 +35,7 @@ let SONG_DURATION = SONG_BARS * 4 * BEAT_S;
 
 // Perspective — low camera so obstacles appear to rush toward player
 const VX = W / 2;           // vanishing point X
-const VY = 110;              // vanishing point Y (lower = more "coming at you" feel)
+const VY = 180;              // vanishing point Y (higher = more "coming at you" feel)
 const ROAD_BOTTOM = 672;     // road bottom edge (near player)
 const ROAD_HW = 384;         // half-width of road at bottom
 const PERSP_POW = 1.5;
@@ -2635,11 +2635,11 @@ function drawCharacter() {
 
   if (charAction === 'DODGE_L') {
     const t = 1 - (charActionTimer / ACTION_DUR);
-    const sway = Math.sin(t * Math.PI) * 25;
+    const sway = Math.sin(t * Math.PI) * 12;
     cx = VX - sway;
   } else if (charAction === 'DODGE_R') {
     const t = 1 - (charActionTimer / ACTION_DUR);
-    const sway = Math.sin(t * Math.PI) * 25;
+    const sway = Math.sin(t * Math.PI) * 12;
     cx = VX + sway;
   } else if (charAction === 'DUCK') {
     scaleY = 0.5;
