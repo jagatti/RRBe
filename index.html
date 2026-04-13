@@ -11,7 +11,6 @@ canvas{display:block;cursor:none}
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="yt-container" style="position:absolute;top:-9999px;left:-9999px;width:1px;height:1px;overflow:hidden;pointer-events:none"></div>
 <script>
 // ============================================================
 // CONSTANTS
@@ -202,17 +201,7 @@ let mp3DropZoneHover = false;   // drag hover visual feedback
 let mp3LoadingMsg = '';         // loading status text
 let customDifficulty = 'NORMAL'; // 'NORMAL' or 'HARD' for custom MP3 songs
 
-// YouTube song state
-let isYouTubeSong = false;       // true when playing from YouTube
-let ytPlayer = null;             // YouTube IFrame API player instance
-let ytPlayerReady = false;       // true when player is ready to play
-let ytAPILoaded = false;         // true when IFrame API script has loaded
-let ytVideoId = '';              // current YouTube video ID
-let ytSongBeats = null;          // virtual beats for YouTube chart generation
-let ytLoadingMsg = '';           // loading status text for YouTube
-let ytLastPollTime = 0;          // performance.now() at last YouTube time poll
-let ytLastPosition = 0;          // player.getCurrentTime() at last poll
-let ytGameStartOffset = 0;      // audio position when game started
+
 
 // Avatar customization state — Minecraft skin texture
 let avatarCustom = null;  // null = default, or { skinCanvas: OffscreenCanvas (64x64 Minecraft skin) }
@@ -226,9 +215,6 @@ let settingsSelection = 0; // 0=volume, 1=scroll speed, 2=avatar drop zone, 3=re
 
 function applyVolume() {
   if (masterGain) masterGain.gain.value = gameVolume * 0.80; // scale to comfortable max
-  if (ytPlayer && ytPlayerReady) {
-    try { ytPlayer.setVolume(gameVolume * 100); } catch(e) {}
-  }
 }
 
 function initAudio() {
@@ -1028,10 +1014,6 @@ function handleMP3Drop(file) {
       let displayName = file.name.replace(/\.[^/.]+$/, '');
       if (displayName.length > 18) displayName = displayName.substring(0, 18) + '…';
 
-      // Clear YouTube state when loading MP3
-      ytSongBeats = null;
-      stopYTPlayback();
-
       // Remove previous custom song entry if exists
       while (SONGS.length > 4) {
         SONGS.pop();
@@ -1062,245 +1044,6 @@ function handleMP3Drop(file) {
   reader.readAsArrayBuffer(file);
 }
 
-// ============================================================
-// YOUTUBE LINK SUPPORT
-// ============================================================
-
-// Parse YouTube URL and extract video ID
-function parseYouTubeUrl(url) {
-  if (!url || typeof url !== 'string') return null;
-  url = url.trim();
-  // Standard: https://www.youtube.com/watch?v=VIDEO_ID
-  let match = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-  if (match) return match[1];
-  // Short: https://youtu.be/VIDEO_ID
-  match = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
-  if (match) return match[1];
-  // Embed: https://www.youtube.com/embed/VIDEO_ID
-  match = url.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
-  if (match) return match[1];
-  // Direct video ID (11 chars)
-  match = url.match(/^([a-zA-Z0-9_-]{11})$/);
-  if (match) return match[1];
-  return null;
-}
-
-// Load YouTube IFrame API dynamically
-function loadYouTubeAPI(callback) {
-  if (ytAPILoaded) { callback(); return; }
-  if (window.YT && window.YT.Player) { ytAPILoaded = true; callback(); return; }
-  const prevCallback = window.onYouTubeIframeAPIReady;
-  window.onYouTubeIframeAPIReady = function() {
-    ytAPILoaded = true;
-    if (prevCallback) prevCallback();
-    callback();
-  };
-  const tag = document.createElement('script');
-  tag.src = 'https://www.youtube.com/iframe_api';
-  document.head.appendChild(tag);
-}
-
-// Generate virtual beats for YouTube chart (BPM-based, no audio analysis)
-function createVirtualBeats(bpm, duration) {
-  const beatS = 60 / bpm;
-  const eighthS = beatS / 2;
-  const beats = [];
-  // Place onsets on 8th-note grid for natural rhythm
-  for (let t = 0; t < duration; t += eighthS) {
-    beats.push(t);
-  }
-
-  // Create metadata arrays mimicking detectBeats() output
-  const len = beats.length;
-  beats._onsetIsMelody = new Uint8Array(len);
-  beats._onsetPitchDir = new Int8Array(len);
-  beats._onsetAmplitudes = new Float32Array(len);
-
-  // Amplitude envelope: simulate verse/chorus dynamics
-  const ampBins = 100;
-  beats._ampEnvelope = new Float32Array(ampBins);
-  beats._ampHopSize = Math.max(1, Math.floor(44100 * duration / ampBins));
-  beats._sampleRate = 44100;
-  beats._duration = duration;
-
-  // Seeded PRNG for repeatable results
-  let seed = Math.floor(bpm * 1000 + duration * 7);
-  function rand() { seed = (seed * 16807) % 2147483647; return (seed & 0x7fffffff) / 0x7fffffff; }
-
-  // Fill onset metadata with musically plausible values
-  for (let i = 0; i < len; i++) {
-    const progress = beats[i] / duration;
-    // Alternate melody/percussion (every other 8th note)
-    beats._onsetIsMelody[i] = (i % 2 === 0) ? 1 : 0;
-    // Pitch direction: cycling pattern
-    beats._onsetPitchDir[i] = [0, 1, 0, -1][i % 4];
-    // Amplitude varies with song position + some randomness
-    const sectionAmp = progress < 0.1 ? 0.35 :
-                       progress < 0.3 ? 0.55 :
-                       progress < 0.5 ? 0.80 :
-                       progress < 0.6 ? 0.45 :
-                       progress < 0.85 ? 0.85 : 0.35;
-    beats._onsetAmplitudes[i] = Math.max(0.1, sectionAmp + (rand() - 0.5) * 0.2);
-  }
-
-  // Fill amplitude envelope
-  for (let i = 0; i < ampBins; i++) {
-    const progress = i / ampBins;
-    beats._ampEnvelope[i] = progress < 0.1 ? 0.30 :
-                            progress < 0.3 ? 0.50 :
-                            progress < 0.5 ? 0.80 :
-                            progress < 0.6 ? 0.40 :
-                            progress < 0.85 ? 0.90 : 0.30;
-  }
-
-  // Vocal likelihood (medium — produces reasonable chart variety)
-  const vocalBins = Math.max(1, Math.floor(duration / 1.5));
-  beats._vocalLikelihood = new Float32Array(vocalBins);
-  beats._vocalWindowSec = 1.5;
-  for (let i = 0; i < vocalBins; i++) beats._vocalLikelihood[i] = 0.15;
-
-  return beats;
-}
-
-// Poll YouTube player time for interpolation
-function pollYTTime() {
-  if (ytPlayer && ytPlayerReady && typeof ytPlayer.getCurrentTime === 'function') {
-    try {
-      ytLastPosition = ytPlayer.getCurrentTime();
-      ytLastPollTime = performance.now();
-    } catch(e) { /* player not ready */ }
-  }
-}
-
-// Create YouTube player for a given video ID
-function createYTPlayer(videoId, onReady) {
-  // Destroy existing player
-  if (ytPlayer) {
-    try { ytPlayer.destroy(); } catch(e) {}
-    ytPlayer = null;
-    ytPlayerReady = false;
-  }
-
-  const container = document.getElementById('yt-container');
-  // Create a fresh div for the player
-  container.innerHTML = '<div id="yt-player"></div>';
-
-  ytPlayer = new YT.Player('yt-player', {
-    width: '1',
-    height: '1',
-    videoId: videoId,
-    playerVars: {
-      autoplay: 0,
-      controls: 0,
-      disablekb: 1,
-      fs: 0,
-      modestbranding: 1,
-      rel: 0,
-      playsinline: 1
-    },
-    events: {
-      onReady: function(event) {
-        ytPlayerReady = true;
-        // Apply game volume
-        event.target.setVolume(gameVolume * 100);
-        if (onReady) onReady(event.target);
-      },
-      onError: function(event) {
-        const errMap = { 2: '無効なパラメータ', 5: 'HTML5再生エラー', 100: '動画が見つかりません', 101: '再生が許可されていません', 150: '再生が許可されていません' };
-        const errMsg = errMap[event.data] || 'エラー ' + event.data;
-        ytLoadingMsg = '❌ ' + errMsg;
-        setTimeout(function() { ytLoadingMsg = ''; }, 3000);
-      }
-    }
-  });
-}
-
-// Handle YouTube URL input
-function handleYouTubeUrl(url) {
-  const videoId = parseYouTubeUrl(url);
-  if (!videoId) {
-    ytLoadingMsg = '❌ 有効なYouTubeリンクではありません';
-    setTimeout(function() { ytLoadingMsg = ''; }, 3000);
-    return;
-  }
-
-  ytLoadingMsg = '🎥 動画を読み込み中...';
-  ytVideoId = videoId;
-
-  loadYouTubeAPI(function() {
-    createYTPlayer(videoId, function(player) {
-      const duration = player.getDuration();
-      if (!duration || duration <= 0) {
-        ytLoadingMsg = '❌ 動画の長さを取得できません';
-        setTimeout(function() { ytLoadingMsg = ''; }, 3000);
-        return;
-      }
-
-      // Use default BPM or let user choose
-      const defaultBPM = 120;
-      const bpmInput = prompt('BPMを入力してください（わからなければそのままOK）:', String(defaultBPM));
-      const bpm = Math.max(60, Math.min(300, parseInt(bpmInput) || defaultBPM));
-      if (!bpmInput || parseInt(bpmInput) !== bpm) {
-        ytLoadingMsg = 'BPM ' + bpm + ' で生成中...';
-      }
-
-      // Generate virtual beats
-      ytSongBeats = createVirtualBeats(bpm, duration);
-
-      // Calculate bars
-      const beatSec = 60 / bpm;
-      const totalBeats = Math.floor(duration / beatSec);
-      const bars = Math.max(8, Math.floor(totalBeats / 4));
-
-      // Title from video ID (compact display)
-      const displayName = 'YouTube (' + videoId.substring(0, 6) + '…)';
-
-      // Clear any previous custom MP3 data so selectSong detects YouTube mode
-      customAudioBuffer = null;
-      customSongBeats = null;
-
-      // Remove previous custom song entry if exists
-      while (SONGS.length > 4) {
-        SONGS.pop();
-        SONG_DATA.pop();
-      }
-
-      // Add YouTube song to SONGS array
-      SONGS.push({
-        name: displayName,
-        bpm: bpm,
-        bars: bars,
-        color: '#ff4444',
-        desc: 'BPM ' + bpm + ' — YouTube動画'
-      });
-      SONG_DATA.push(SONG_DATA[0]); // placeholder
-
-      // Select the YouTube song
-      songSelectIndex = SONGS.length - 1;
-      ytLoadingMsg = '✓ ' + displayName + ' (BPM ' + bpm + ', ' + Math.floor(duration) + '秒)';
-      setTimeout(function() { ytLoadingMsg = ''; }, 3000);
-    });
-  });
-}
-
-// Start YouTube playback for game
-function startYTPlayback() {
-  if (!ytPlayer || !ytPlayerReady) return;
-  ytPlayer.setVolume(gameVolume * 100);
-  ytPlayer.seekTo(0, true);
-  ytPlayer.playVideo();
-  // Record start offset for timing
-  ytGameStartOffset = 0;
-  ytLastPosition = 0;
-  ytLastPollTime = performance.now();
-}
-
-// Stop YouTube playback
-function stopYTPlayback() {
-  if (ytPlayer && ytPlayerReady) {
-    try { ytPlayer.pauseVideo(); } catch(e) {}
-  }
-}
 
 // Build the default Minecraft skin canvas (64x64) procedurally
 function buildDefaultSkin() {
@@ -1573,8 +1316,8 @@ function sfxMiss(t) {
 // Audio scheduler
 function scheduleAudio() {
   if (!audioCtx || gameState !== 'PLAYING') return;
-  // Skip synth scheduling for custom MP3 or YouTube songs
-  if (isCustomSong || isYouTubeSong) {
+  // Skip synth scheduling for custom MP3 songs
+  if (isCustomSong) {
     // Still track beats for visual beat flash
     while (nextStepTime < audioCtx.currentTime + 0.1) {
       const step = stepCount % 16;
@@ -2021,13 +1764,6 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyD' && songSelectIndex >= 4) {
       customDifficulty = customDifficulty === 'NORMAL' ? 'HARD' : 'NORMAL';
     }
-    // YouTube link input
-    if (e.code === 'KeyV') {
-      const url = prompt('YouTube動画のURLを貼り付けてください:');
-      if (url && url.trim()) {
-        handleYouTubeUrl(url.trim());
-      }
-    }
   } else if (gameState === 'START' && e.code === 'Space') {
     startGame();
   } else if (gameState === 'RESULT' && (e.code === 'KeyR' || e.code === 'Space')) {
@@ -2071,12 +1807,6 @@ canvas.addEventListener('drop', (e) => {
 // TIMING / JUDGMENT
 // ============================================================
 function musicTime() {
-  if (isYouTubeSong && ytPlayer && ytPlayerReady) {
-    // Interpolate between YouTube API polls for smooth frame-by-frame timing
-    const now = performance.now();
-    const elapsed = (now - ytLastPollTime) / 1000;
-    return (ytLastPosition - ytGameStartOffset) + elapsed;
-  }
   if (!audioCtx || gameStartTime < 0) return 0;
   return audioCtx.currentTime - gameStartTime;
 }
@@ -2203,10 +1933,7 @@ function update(deltaT) {
         nextStepTime = gameStartTime;
         stepCount = 0; beatCount = 0; melodyPos = 0;
       }
-      if (isYouTubeSong) {
-        startYTPlayback();
-        gameStartTime = 0; // mark as started (not -1)
-      } else if (isCustomSong) {
+      if (isCustomSong) {
         startCustomAudio();
       }
     }
@@ -2214,9 +1941,6 @@ function update(deltaT) {
   }
 
   if (gameState !== 'PLAYING') return;
-
-  // Poll YouTube player time for accurate interpolation
-  if (isYouTubeSong) pollYTTime();
 
   scheduleAudio();
   processAutoMisses();
@@ -2252,8 +1976,8 @@ function update(deltaT) {
 
   // Goal line: start showing when near the end of the song
   const lastObsTime = obstacles.length > 0 ? obstacles[obstacles.length - 1].time : SONG_DURATION;
-  // For custom/YouTube songs, goal is based on song duration (wait for song to finish)
-  const goalTime = (isCustomSong || isYouTubeSong) ? Math.max(lastObsTime, SONG_DURATION - 2.0) : lastObsTime;
+  // For custom songs, goal is based on song duration (wait for song to finish)
+  const goalTime = isCustomSong ? Math.max(lastObsTime, SONG_DURATION - 2.0) : lastObsTime;
   const goalAppearTime = goalTime - effectiveScrollTime() * 0.5;
   if (now >= goalAppearTime) {
     // goalLineZ goes from 0 (horizon) to 1 (judgment line)
@@ -2284,12 +2008,11 @@ function update(deltaT) {
 
   const allDone = obstacles.length > 0 && obstacles.every(o => o.judged);
   // For custom songs, wait until the actual song file finishes playing
-  const endTime = (isCustomSong || isYouTubeSong) ? Math.max(lastObsTime + 1.5, SONG_DURATION) : lastObsTime + 1.5;
+  const endTime = isCustomSong ? Math.max(lastObsTime + 1.5, SONG_DURATION) : lastObsTime + 1.5;
   // Wait for celebration to finish before showing result
   const canShowResult = celebrationTimer <= 0;
   if (allDone && now >= endTime && canShowResult) {
     stopCustomAudio();
-    stopYTPlayback();
     gameState = 'RESULT';
   }
 }
@@ -3872,10 +3595,10 @@ function drawSongSelectScreen() {
   ctx.font = '14px sans-serif';
   ctx.fillText('← → で選択、スペースで決定', VX, 490);
 
-  // Difficulty selector for custom/YouTube songs
-  if (songSelectIndex >= 4 && (customAudioBuffer || ytPlayerReady)) {
+  // Difficulty selector for custom songs
+  if (songSelectIndex >= 4 && customAudioBuffer) {
     const diffY = 516;
-    ctx.fillStyle = isYouTubeSong || (ytPlayerReady && !customAudioBuffer) ? '#ff4444' : '#00ff88';
+    ctx.fillStyle = '#00ff88';
     ctx.font = 'bold 16px sans-serif';
     const diffLabel = customDifficulty === 'HARD' ? '🔥 ハード（16分音符）' : '🎵 ノーマル';
     ctx.fillText('難易度: ' + diffLabel, VX, diffY);
@@ -3932,23 +3655,11 @@ function drawSongSelectScreen() {
     ctx.fillText('🎵 MP3ファイルをドラッグ＆ドロップで追加', VX, 636);
   }
 
-  // YouTube link button
-  ctx.fillStyle = 'rgba(255,68,68,0.55)';
-  ctx.font = '12px sans-serif';
-  ctx.fillText('🎥 Vキーで動画リンク（YouTube）を入力', VX, 652);
-
   // MP3 loading message
   if (mp3LoadingMsg) {
     ctx.fillStyle = '#00ff88';
     ctx.font = 'bold 14px sans-serif';
     ctx.fillText(mp3LoadingMsg, VX, 670);
-  }
-
-  // YouTube loading message
-  if (ytLoadingMsg) {
-    ctx.fillStyle = '#ff4444';
-    ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(ytLoadingMsg, VX, mp3LoadingMsg ? 688 : 670);
   }
 
   ctx.restore();
@@ -4015,10 +3726,8 @@ function resetGame() {
   goalReached = false;
   celebrationTimer = 0;
 
-  // Use beat-detected chart for custom MP3, virtual beats for YouTube, normal generator otherwise
-  if (isYouTubeSong && ytSongBeats) {
-    obstacles = generateChartFromBeats(ytSongBeats, BPM, SONG_DURATION, customDifficulty);
-  } else if (isCustomSong && customSongBeats) {
+  // Use beat-detected chart for custom MP3, normal generator otherwise
+  if (isCustomSong && customSongBeats) {
     obstacles = generateChartFromBeats(customSongBeats, BPM, SONG_DURATION, customDifficulty);
   } else {
     obstacles = generateChart();
@@ -4041,7 +3750,7 @@ function resetGame() {
     nextStepTime = 0;
   }
 
-  // Custom audio / YouTube will be started when READY_GO finishes (transition to PLAYING)
+  // Custom audio will be started when READY_GO finishes (transition to PLAYING)
 }
 
 function selectSong(idx) {
@@ -4053,12 +3762,7 @@ function selectSong(idx) {
   SONG_BARS = song.bars;
   SONG_DURATION = SONG_BARS * 4 * BEAT_S;
   isCustomSong = (idx >= 4 && customAudioBuffer !== null);
-  isYouTubeSong = (idx >= 4 && !customAudioBuffer && ytPlayerReady && ytSongBeats !== null);
-  if (isYouTubeSong) {
-    // YouTube song: use player duration
-    SONG_DURATION = ytPlayer.getDuration();
-    curSongData = SONG_DATA[0]; // placeholder
-  } else if (!isCustomSong) {
+  if (!isCustomSong) {
     curSongData = SONG_DATA[idx];
   } else {
     // For custom songs, use actual audio duration
@@ -4076,7 +3780,6 @@ function startGame() {
 
 function resetToStart() {
   stopCustomAudio();
-  stopYTPlayback();
   gameState = 'SONG_SELECT';
 }
 
