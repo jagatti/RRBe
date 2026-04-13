@@ -256,7 +256,11 @@ function startCustomAudio() {
   customSourceNode = audioCtx.createBufferSource();
   customSourceNode.buffer = customAudioBuffer;
   customSourceNode.connect(masterGain);
-  customSourceNode.start(gameStartTime >= 0 ? gameStartTime : audioCtx.currentTime);
+  // Capture the exact current time and use it for both scheduling and gameStartTime
+  // to eliminate the micro-skew between when gameStartTime was set (in update()) and now
+  const now = audioCtx.currentTime;
+  gameStartTime = now;
+  customSourceNode.start(now);
 }
 
 // ============================================================
