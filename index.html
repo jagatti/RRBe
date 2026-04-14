@@ -2586,7 +2586,7 @@ function drawBurstOverlay() {
     const z0 = Z_FAR + (Z_NEAR - Z_FAR) * (i / STRIPS);
     const z1 = Z_FAR + (Z_NEAR - Z_FAR) * ((i + 1) / STRIPS);
 
-    // Concave alpha: t^0.4 curve from near(35%) to far(80%)
+    // Concave alpha: t^0.4 curve from far(80%) to near(35%)
     const t = 1.0 - (i + 0.5) / STRIPS; // 1.0 at far, 0.0 at near
     const alpha = BURST_ALPHA_NEAR + (BURST_ALPHA_FAR - BURST_ALPHA_NEAR) * Math.pow(t, 0.4);
 
