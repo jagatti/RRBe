@@ -2535,7 +2535,7 @@ function drawObstacles() {
       ctx.shadowColor = col;
       ctx.shadowBlur = 20 * boost;
       ctx.fillStyle = col;
-      ctx.globalAlpha = boost * 0.15;
+      ctx.globalAlpha = boost * 0.15 * alpha;
       ctx.beginPath();
       ctx.arc(VX, y, 35 * scale, 0, Math.PI * 2);
       ctx.fill();
@@ -2549,6 +2549,7 @@ function drawPylon(x, y, scale, color, isLeft) {
   // Traffic cone / pylon shape
   const w = 28 * scale;
   const h = 70 * scale;
+  const parentAlpha = ctx.globalAlpha;
 
   ctx.save();
   ctx.shadowColor = color;
@@ -2566,11 +2567,11 @@ function drawPylon(x, y, scale, color, isLeft) {
 
   // White stripes
   ctx.fillStyle = '#fff';
-  ctx.globalAlpha = 0.7;
+  ctx.globalAlpha = 0.7 * parentAlpha;
   const stripeH = h * 0.15;
   ctx.fillRect(x - w * 0.85, y - h * 0.35, w * 1.7, stripeH);
   ctx.fillRect(x - w * 0.65, y - h * 0.65, w * 1.3, stripeH);
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = parentAlpha;
 
   ctx.restore();
 }
@@ -2582,6 +2583,7 @@ function drawArch(x, y, scale, color) {
   const postW = 14 * scale;
   const postH = h * 0.78;    // very tall vertical posts (78% of height)
   const archTop = y - postH; // where posts end and curve begins
+  const parentAlpha = ctx.globalAlpha;
 
   ctx.save();
   ctx.shadowColor = color;
@@ -2611,7 +2613,7 @@ function drawArch(x, y, scale, color) {
   ctx.fill();
 
   // Glow effect on arch ceiling
-  ctx.globalAlpha = 0.3;
+  ctx.globalAlpha = 0.3 * parentAlpha;
   ctx.fillStyle = '#fff';
   ctx.beginPath();
   ctx.moveTo(x - w - postW, archTop);
@@ -2628,7 +2630,7 @@ function drawArch(x, y, scale, color) {
   );
   ctx.closePath();
   ctx.fill();
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = parentAlpha;
 
   ctx.restore();
 }
@@ -2637,6 +2639,7 @@ function drawBlock(x, y, scale, color) {
   // Ground block - low obstacle to jump over
   const w = 45 * scale;
   const h = 38 * scale;
+  const parentAlpha = ctx.globalAlpha;
 
   ctx.save();
   ctx.shadowColor = color;
@@ -2648,16 +2651,16 @@ function drawBlock(x, y, scale, color) {
 
   // Top face (lighter)
   ctx.fillStyle = '#88ff88';
-  ctx.globalAlpha = 0.4;
+  ctx.globalAlpha = 0.4 * parentAlpha;
   ctx.fillRect(x - w, y - h, w * 2, h * 0.3);
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = parentAlpha;
 
   // Side highlight
   ctx.strokeStyle = '#fff';
-  ctx.globalAlpha = 0.3;
+  ctx.globalAlpha = 0.3 * parentAlpha;
   ctx.lineWidth = 1;
   ctx.strokeRect(x - w, y - h, w * 2, h);
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = parentAlpha;
 
   ctx.restore();
 }
@@ -2666,6 +2669,7 @@ function drawStar(x, y, scale, color, isLeft) {
   // Yellow star collectible
   const r = 34 * scale;
   const ir = 16 * scale;
+  const parentAlpha = ctx.globalAlpha;
 
   ctx.save();
   ctx.shadowColor = color;
@@ -2693,11 +2697,11 @@ function drawStar(x, y, scale, color, isLeft) {
 
   // Inner highlight
   ctx.fillStyle = '#fff';
-  ctx.globalAlpha = 0.4;
+  ctx.globalAlpha = 0.4 * parentAlpha;
   ctx.beginPath();
   ctx.arc(0, 0, ir * 0.6, 0, Math.PI * 2);
   ctx.fill();
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = parentAlpha;
 
   ctx.restore();
 }
