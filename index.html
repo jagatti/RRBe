@@ -1,0 +1,3834 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>RRBe – Race &amp; Rhythm Beat</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;display:flex;justify-content:center;align-items:center;height:100vh;overflow:hidden;font-family:'Segoe UI',Arial,sans-serif}
+canvas{display:block;cursor:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ============================================================
+// CONSTANTS
+// ============================================================
+const W = 1024, H = 768;
+
+// Song definitions — 4 songs at different BPMs
+const SONGS = [
+  { name: 'City Pop Groove', bpm: 130, bars: 48, color: '#44ccff', desc: 'BPM 130 — メロウ＆グルービー' },
+  { name: 'Neon Rush',       bpm: 150, bars: 48, color: '#ffcc00', desc: 'BPM 150 — シンセドライブ' },
+  { name: 'Hyper Drive',     bpm: 180, bars: 48, color: '#ff4488', desc: 'BPM 180 — インテンス' },
+  { name: 'Chaos Protocol',  bpm: 170, bars: 56, color: '#cc44ff', desc: 'BPM 170 — 16分エキスパート' },
+];
+let selectedSong = 0;
+
+// These are recalculated when a song is selected
+let BPM = 150;
+let BEAT_S = 60 / BPM;
+let STEP_S = BEAT_S / 4;
+let SONG_BARS = 48;
+let SONG_DURATION = SONG_BARS * 4 * BEAT_S;
+
+// Perspective — low camera so obstacles appear to rush toward player
+const VX = W / 2;           // vanishing point X
+const VY = 180;              // vanishing point Y (higher = more "coming at you" feel)
+const ROAD_BOTTOM = 672;     // road bottom edge (near player)
+const ROAD_HW = 384;         // half-width of road at bottom
+const PERSP_POW = 1.5;
+
+// Obstacle scroll
+const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
+const SCROLL_SPEED_MIN = 0.5;
+const SCROLL_SPEED_MAX = 2.0; // capped at 2.0x — speeds above this are humanly unreadable
+const SCROLL_SPEED_CLAMP = 0.8; // minimum multiplier floor to prevent overly tight spacing at low speeds
+let scrollSpeedMult = 1.5; // user-adjustable: 0.5x (slow) – 2.0x (fast), default 1.5
+function effectiveScrollTime() { return OBS_SCROLL_TIME / scrollSpeedMult; }
+const CHART_START_OFFSET = 0; // no offset: music and obstacles start together after GO
+
+// Obstacle visibility
+const OBS_VIS_CUTOFF = -0.15;  // z value below which obstacles are hidden
+const OBS_FAR_ALPHA  = 0.08;   // opacity at the farthest visible distance (very thin hint)
+const OBS_FULL_ALPHA_Z = 0.50; // z at which obstacles reach full opacity
+const OBS_SCALE_MIN  = 0.15;  // scale at cutoff (far) — small for dramatic depth
+const OBS_SCALE_MAX  = 0.85;  // scale at z=1.0 (near) — large for impact
+
+// Timing windows (seconds)
+const T_PERFECT = 0.055;
+const T_GREAT   = 0.105;
+const T_NICE    = 0.155;
+const T_BAD     = 0.210;
+const T_MISS    = 0.260;
+
+// Obstacle types and corresponding correct keys
+// PYLON_R: pylon on right side -> press LEFT to dodge left
+// PYLON_L: pylon on left side  -> press RIGHT to dodge right
+// ARCH:    overhead arch        -> press DOWN to duck
+// BLOCK:   ground block         -> press UP to jump
+// STAR_R:  star on right side   -> press RIGHT to collect (opposite of pylon)
+// STAR_L:  star on left side    -> press LEFT to collect (opposite of pylon)
+const OBS_TYPES = ['PYLON_R', 'PYLON_L', 'ARCH', 'BLOCK', 'STAR_R', 'STAR_L'];
+const OBS_KEYS  = {
+  PYLON_R: 'ArrowLeft',
+  PYLON_L: 'ArrowRight',
+  ARCH:    'ArrowDown',
+  BLOCK:   'ArrowUp',
+  STAR_R:  'ArrowRight',
+  STAR_L:  'ArrowLeft'
+};
+const OBS_COLORS = {
+  PYLON_R: '#ff6622',
+  PYLON_L: '#ff6622',
+  ARCH:    '#00ccff',
+  BLOCK:   '#44ff44',
+  STAR_R:  '#ffdd00',
+  STAR_L:  '#ffdd00'
+};
+const OBS_LABELS = {
+  PYLON_R: '← DODGE',
+  PYLON_L: 'DODGE →',
+  ARCH:    '↓ DUCK',
+  BLOCK:   '↑ JUMP',
+  STAR_R:  '→ GET',
+  STAR_L:  '← GET'
+};
+
+// Judgment
+const JUDGE_COLORS = {
+  PERFECT: '#00ffff', GREAT: '#44ff44',
+  NICE: '#ffff00', BAD: '#ff8800', MISS: '#ff2244'
+};
+const JUDGE_SCORE = { PERFECT: 100, GREAT: 80, NICE: 50, BAD: 20, MISS: 0 };
+
+// Character action durations
+const ACTION_DUR = 0.18;
+
+// Audio — per-song musical data for distinct atmospheres
+// Song 0: City Pop Groove (BPM 130) — mellow, groovy, jazzy chords
+const SONG_DATA = [
+  {
+    bass: [65.4, 65.4, 82.4, 73.4, 65.4, 73.4, 82.4, 73.4, 87.3, 87.3, 98, 82.4, 73.4, 82.4, 98, 87.3],
+    scale: [261.63, 293.66, 329.63, 349.23, 392, 440, 493.88, 523.25, 587.33, 659.25],
+    melody: [0, -1, 2, 4, 6, -1, 4, 2, 3, -1, 5, 7, 9, -1, 7, 5, 4, -1, 6, 2, 0, -1, 2, 4, 3, 5, 7, 4, 2, -1, 0, 2],
+    kick: new Set([0, 8]),
+    snare: new Set([4, 12]),
+    ohihat: new Set([2, 6, 10, 14]),
+    bassSteps: new Set([0, 4, 8, 12]),
+    synthSteps: new Set([0, 4, 8, 12]),
+    synthType: 'sine',
+    bassFilter: 350,
+    synthGain: 0.10,
+    bassGain: 0.4,
+    kickPitch: 160,
+  },
+  // Song 1: Neon Rush (BPM 150) — energetic, driving synth-pop
+  {
+    bass: [82.4, 82.4, 110, 98, 73.4, 73.4, 98, 110, 82.4, 65.4, 73.4, 98, 110, 82.4, 65.4, 73.4],
+    scale: [329.63, 369.99, 392, 440, 493.88, 523.25, 587.33, 659.25, 739.99, 783.99],
+    melody: [0, -1, 4, 2, 7, -1, 5, 3, 1, -1, 6, 4, 9, 7, 5, 3, 2, -1, 4, 7, 9, -1, 6, 4, 5, 3, 1, 0, 2, -1, 4, 7],
+    kick: new Set([0, 4, 8, 12]),
+    snare: new Set([4, 12]),
+    ohihat: new Set([2, 6, 10, 14]),
+    bassSteps: new Set([0, 2, 4, 6, 8, 10, 12, 14]),
+    synthSteps: new Set([0, 2, 4, 8, 10, 12]),
+    synthType: 'square',
+    bassFilter: 400,
+    synthGain: 0.12,
+    bassGain: 0.5,
+    kickPitch: 180,
+  },
+  // Song 2: Hyper Drive (BPM 180) — intense, aggressive, heavy bass
+  {
+    bass: [55, 55, 73.4, 65.4, 55, 65.4, 73.4, 82.4, 55, 55, 82.4, 73.4, 65.4, 73.4, 82.4, 98],
+    scale: [220, 261.63, 293.66, 329.63, 392, 440, 523.25, 587.33, 659.25, 783.99],
+    melody: [2, 4, 6, -1, 8, 6, 4, 2, 0, 2, 4, 6, 9, -1, 7, 5, 4, 6, 8, 9, 7, 5, 4, 2, 0, -1, 2, 4, 6, 8, 9, 7],
+    kick: new Set([0, 2, 4, 6, 8, 10, 12, 14]),
+    snare: new Set([4, 12]),
+    ohihat: new Set([1, 3, 5, 7, 9, 11, 13, 15]),
+    bassSteps: new Set([0, 2, 4, 6, 8, 10, 12, 14]),
+    synthSteps: new Set([0, 2, 4, 6, 8, 10, 12, 14]),
+    synthType: 'sawtooth',
+    bassFilter: 500,
+    synthGain: 0.14,
+    bassGain: 0.55,
+    kickPitch: 200,
+  },
+  // Song 3: Chaos Protocol (BPM 170) — dark trance, intense but melodic
+  {
+    bass: [82.4, 82.4, 98, 110, 82.4, 98, 110, 123.47, 73.4, 73.4, 98, 82.4, 110, 98, 82.4, 73.4],
+    scale: [329.63, 369.99, 392, 440, 493.88, 523.25, 587.33, 659.25, 739.99, 783.99],
+    melody: [0, 2, 4, -1, 7, 5, 3, -1, 2, 4, 6, 8, 7, -1, 5, 3, 4, 6, 8, 9, 7, -1, 5, 4, 2, 4, 7, 5, 3, -1, 0, 2],
+    kick: new Set([0, 4, 8, 12]),
+    snare: new Set([4, 12]),
+    ohihat: new Set([2, 6, 10, 14]),
+    bassSteps: new Set([0, 2, 4, 6, 8, 10, 12, 14]),
+    synthSteps: new Set([0, 2, 3, 4, 6, 8, 10, 11, 12, 14]),
+    synthType: 'triangle',
+    bassFilter: 380,
+    synthGain: 0.11,
+    bassGain: 0.45,
+    kickPitch: 190,
+  }
+];
+let curSongData = SONG_DATA[0];
+
+// ============================================================
+// CANVAS
+// ============================================================
+const canvas = document.getElementById('c');
+canvas.width = W; canvas.height = H;
+const ctx = canvas.getContext('2d');
+
+// ============================================================
+// AUDIO ENGINE
+// ============================================================
+let audioCtx = null, masterGain = null;
+let nextStepTime = 0, stepCount = 0, beatCount = 0;
+let melodyPos = 0;
+let audioStarted = false;
+let gameStartTime = -1;
+let gameVolume = 0.50; // 0.0 – 1.0, default 50%
+
+// Custom MP3 song state
+let customAudioBuffer = null;   // decoded AudioBuffer
+let customSourceNode = null;    // playing BufferSourceNode
+let customSongBeats = null;     // array of beat times (seconds)
+let isCustomSong = false;       // true when playing a dropped MP3
+let mp3DropZoneHover = false;   // drag hover visual feedback
+let mp3LoadingMsg = '';         // loading status text
+let customDifficulty = 'NORMAL'; // 'NORMAL', 'HARD', or 'EXPERT' for custom MP3 songs
+let customDetectedBPM = null;   // auto-detected BPM (kept for display even after user override)
+
+
+
+// Avatar customization state — Minecraft skin texture
+let avatarCustom = null;  // null = default, or { skinCanvas: OffscreenCanvas (64x64 Minecraft skin) }
+let skinTexture = null;   // HTMLCanvasElement holding the full 64x64 skin for drawing
+let skinHasHat = false;   // cached: whether hat overlay layer has visible pixels
+let avatarDropHover = false;
+let avatarLoadingMsg = '';
+
+// Settings screen state
+let settingsSelection = 0; // 0=volume, 1=scroll speed, 2=avatar drop zone, 3=reset avatar, 4=back
+
+function applyVolume() {
+  if (masterGain) masterGain.gain.value = gameVolume * 0.80; // scale to comfortable max
+}
+
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    applyVolume();
+    masterGain.connect(audioCtx.destination);
+  }
+  nextStepTime = audioCtx.currentTime + 0.1;
+  stepCount = 0; beatCount = 0; melodyPos = 0;
+  audioStarted = true;
+}
+
+function stopCustomAudio() {
+  if (customSourceNode) {
+    try { customSourceNode.stop(); } catch(e) {}
+    customSourceNode = null;
+  }
+}
+
+function startCustomAudio() {
+  if (!customAudioBuffer || !audioCtx) return;
+  stopCustomAudio();
+  customSourceNode = audioCtx.createBufferSource();
+  customSourceNode.buffer = customAudioBuffer;
+  customSourceNode.connect(masterGain);
+  // Capture the exact current time and use it for both scheduling and gameStartTime
+  // to eliminate the micro-skew between when gameStartTime was set (in update()) and now
+  const now = audioCtx.currentTime;
+  gameStartTime = now;
+  customSourceNode.start(now);
+}
+
+// ============================================================
+// BEAT DETECTION — energy-based onset detection with waveform amplitude
+// ============================================================
+function detectBeats(audioBuffer) {
+  // Downsample to mono
+  const numChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const length = audioBuffer.length;
+  const mono = new Float32Array(length);
+  for (let ch = 0; ch < numChannels; ch++) {
+    const data = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < length; i++) mono[i] += data[i] / numChannels;
+  }
+
+  // ---- Multi-band spectral flux onset detection ----
+  // Split into 3 frequency bands: low (<300Hz), mid (300-3000Hz), high (>3000Hz)
+  // This better captures melody onsets vs. percussion
+
+  const windowSize = Math.floor(sampleRate * 0.023); // ~23ms windows (~1013 samples at 44.1kHz)
+  const hopSize = Math.floor(windowSize / 2);
+  const numWindows = Math.floor((length - windowSize) / hopSize);
+
+  // Compute energy in each band using simple bandpass approximation
+  // Low-pass: running average (smooths high frequencies)
+  // Band energy via difference of smoothed signals
+  const energyLow = new Float32Array(numWindows);
+  const energyMid = new Float32Array(numWindows);
+  const energyHigh = new Float32Array(numWindows);
+  const energyTotal = new Float32Array(numWindows);
+
+  // Pre-filter: create band-separated signals using simple IIR filters
+  const lowPass = new Float32Array(length);
+  const midPass = new Float32Array(length);
+  const highPass = new Float32Array(length);
+
+  // Simple one-pole low-pass filter coefficients
+  const lowCutoff = 300 / sampleRate;
+  const midCutoff = 3000 / sampleRate;
+  const alphaLow = Math.exp(-2 * Math.PI * lowCutoff);
+  const alphaMid = Math.exp(-2 * Math.PI * midCutoff);
+
+  let lpLow = 0, lpMid = 0;
+  for (let i = 0; i < length; i++) {
+    lpLow = alphaLow * lpLow + (1 - alphaLow) * mono[i];
+    lpMid = alphaMid * lpMid + (1 - alphaMid) * mono[i];
+    lowPass[i] = lpLow;
+    highPass[i] = mono[i] - lpMid;
+    midPass[i] = lpMid - lpLow;
+  }
+
+  for (let w = 0; w < numWindows; w++) {
+    let sumLow = 0, sumMid = 0, sumHigh = 0, sumTotal = 0;
+    const start = w * hopSize;
+    for (let i = start; i < start + windowSize; i++) {
+      sumLow += lowPass[i] * lowPass[i];
+      sumMid += midPass[i] * midPass[i];
+      sumHigh += highPass[i] * highPass[i];
+      sumTotal += mono[i] * mono[i];
+    }
+    energyLow[w] = sumLow / windowSize;
+    energyMid[w] = sumMid / windowSize;
+    energyHigh[w] = sumHigh / windowSize;
+    energyTotal[w] = sumTotal / windowSize;
+  }
+
+  // Compute spectral flux (positive energy increase) for each band
+  const fluxLow = new Float32Array(numWindows);
+  const fluxMid = new Float32Array(numWindows);
+  const fluxHigh = new Float32Array(numWindows);
+  for (let w = 1; w < numWindows; w++) {
+    fluxLow[w] = Math.max(0, energyLow[w] - energyLow[w - 1]);
+    fluxMid[w] = Math.max(0, energyMid[w] - energyMid[w - 1]);
+    fluxHigh[w] = Math.max(0, energyHigh[w] - energyHigh[w - 1]);
+  }
+
+  // Detect onsets using combined spectral flux with adaptive threshold
+  const avgWindow = 40; // ~460ms history for adaptive threshold
+  const onsets = [];
+  const threshold = 1.4; // onset must exceed local average by this factor
+  let lastOnsetTime = -0.15;
+
+  for (let w = avgWindow; w < numWindows; w++) {
+    // Compute local average for each band
+    let avgLow = 0, avgMid = 0, avgHigh = 0, avgTotal = 0;
+    for (let j = w - avgWindow; j < w; j++) {
+      avgLow += fluxLow[j];
+      avgMid += fluxMid[j];
+      avgHigh += fluxHigh[j];
+      avgTotal += energyTotal[j];
+    }
+    avgLow /= avgWindow;
+    avgMid /= avgWindow;
+    avgHigh /= avgWindow;
+    avgTotal /= avgWindow;
+
+    const t = (w * hopSize) / sampleRate;
+
+    // Combined onset detection: weighted sum of band fluxes
+    // Mid-band (melody/vocal) gets highest weight — these are the sounds
+    // that humans intuitively recognise and want to "tap along" with
+    const combinedFlux = fluxLow[w] * 0.15 + fluxMid[w] * 0.60 + fluxHigh[w] * 0.25;
+    const combinedAvg = avgLow * 0.15 + avgMid * 0.60 + avgHigh * 0.25;
+
+    // Melody-band specific onset: strong mid-band flux alone qualifies
+    // Lowered threshold so more melody notes are captured
+    const melodyFluxOnset = fluxMid[w] > avgMid * (threshold * 0.80) && fluxMid[w] > 0.00015;
+
+    // Also check total energy onset — prominent beats (kick hits, chord stabs)
+    const totalOnset = energyTotal[w] > avgTotal * (threshold * 1.2) && energyTotal[w] > 0.002;
+
+    // Onset if combined flux exceeds threshold OR melody/total onset detected
+    const fluxOnset = combinedFlux > combinedAvg * threshold && combinedFlux > 0.0001;
+
+    // Minimum onset interval: 40ms allows 32nd notes at ~190 BPM
+    if ((fluxOnset || melodyFluxOnset || totalOnset) && t - lastOnsetTime > 0.04) {
+      onsets.push(t);
+      lastOnsetTime = t;
+    }
+  }
+
+  // Store per-onset melody/percussion classification and pitch direction
+  const onsetIsMelody = new Uint8Array(onsets.length);
+  // Pitch direction: +1 = rising, -1 = falling, 0 = neutral
+  const onsetPitchDir = new Int8Array(onsets.length);
+  // Re-classify each onset
+  for (let i = 0; i < onsets.length; i++) {
+    const t = onsets[i];
+    const w = Math.floor((t * sampleRate) / hopSize);
+    if (w > 0 && w < numWindows) {
+      const mFlux = fluxMid[w];
+      const lFlux = fluxLow[w];
+      const hFlux = fluxHigh[w];
+      onsetIsMelody[i] = (mFlux > lFlux * 0.9 && mFlux > hFlux * 0.6) ? 1 : 0;
+
+      // Detect pitch direction by comparing mid-band energy trend
+      // Look at energy change in a small window around this onset
+      const lookback = Math.min(w, 6);
+      const lookfwd = Math.min(numWindows - w - 1, 6);
+      if (lookback >= 2 && lookfwd >= 2) {
+        let prevMidE = 0, nextMidE = 0;
+        for (let j = w - lookback; j < w; j++) prevMidE += energyMid[j];
+        for (let j = w + 1; j <= w + lookfwd; j++) nextMidE += energyMid[j];
+        prevMidE /= lookback;
+        nextMidE /= lookfwd;
+        // Also compare high vs low band energy for pitch height
+        const highDominance = hFlux > lFlux * 1.5;
+        const lowDominance = lFlux > hFlux * 1.5;
+        if (nextMidE > prevMidE * 1.15 || highDominance) onsetPitchDir[i] = 1;   // rising
+        else if (prevMidE > nextMidE * 1.15 || lowDominance) onsetPitchDir[i] = -1; // falling
+        else onsetPitchDir[i] = 0; // neutral
+      }
+    }
+  }
+  onsets._onsetIsMelody = onsetIsMelody;
+  onsets._onsetPitchDir = onsetPitchDir;
+
+  // Store waveform amplitude data for chart generation
+  // Compute RMS energy in larger windows (100ms) for amplitude envelope
+  const ampWindowSize = Math.floor(sampleRate * 0.1); // 100ms
+  const ampHopSize = Math.floor(ampWindowSize / 4);    // 25ms hop
+  const numAmpWindows = Math.floor((length - ampWindowSize) / ampHopSize);
+  const ampEnvelope = new Float32Array(numAmpWindows);
+  let maxAmp = 0;
+
+  for (let w = 0; w < numAmpWindows; w++) {
+    let sum = 0;
+    const start = w * ampHopSize;
+    for (let i = start; i < start + ampWindowSize; i++) {
+      sum += mono[i] * mono[i];
+    }
+    ampEnvelope[w] = Math.sqrt(sum / ampWindowSize); // RMS
+    if (ampEnvelope[w] > maxAmp) maxAmp = ampEnvelope[w];
+  }
+
+  // Normalize amplitude envelope to 0-1
+  if (maxAmp > 0) {
+    for (let w = 0; w < numAmpWindows; w++) {
+      ampEnvelope[w] /= maxAmp;
+    }
+  }
+
+  // Store amplitude lookup function on the onsets array
+  onsets._ampEnvelope = ampEnvelope;
+  onsets._ampHopSize = ampHopSize;
+  onsets._sampleRate = sampleRate;
+  onsets._duration = length / sampleRate;
+
+  // Compute amplitude at each onset time
+  onsets._onsetAmplitudes = onsets.map(t => {
+    const idx = Math.floor((t * sampleRate) / ampHopSize);
+    if (idx >= 0 && idx < numAmpWindows) return ampEnvelope[idx];
+    return 0;
+  });
+
+  // ---- Improved vocal detection using spectral analysis ----
+  const vocalWindowSec = 1.5; // 1.5-second windows for finer resolution
+  const vocalWindowSamples = Math.floor(sampleRate * vocalWindowSec);
+  const numVocalWindows = Math.floor(length / vocalWindowSamples);
+  const vocalLikelihood = new Float32Array(numVocalWindows);
+
+  for (let vw = 0; vw < numVocalWindows; vw++) {
+    const start = vw * vocalWindowSamples;
+    const end = Math.min(start + vocalWindowSamples, length);
+    const segLen = end - start;
+
+    // Measure mid-band energy ratio (vocal range: 300-3000Hz)
+    let midEnergy = 0, totalEnergy = 0;
+    for (let i = start; i < end; i++) {
+      midEnergy += midPass[i] * midPass[i];
+      totalEnergy += mono[i] * mono[i];
+    }
+    midEnergy = Math.sqrt(midEnergy / segLen);
+    totalEnergy = Math.sqrt(totalEnergy / segLen);
+
+    // Also check zero crossing rate for vocal frequency estimation
+    let zeroCrossings = 0;
+    let prev = 0;
+    for (let i = start; i < end; i++) {
+      if (i > start && mono[i] * prev < 0) zeroCrossings++;
+      prev = mono[i];
+    }
+    const zcr = zeroCrossings / segLen * sampleRate;
+
+    // Spectral flatness approximation: vocal content has more harmonic structure
+    // (lower flatness) compared to noise/percussion (higher flatness)
+    let spectralVariance = 0;
+    const subWin = Math.floor(segLen / 20);
+    const subEnergies = [];
+    for (let sw = 0; sw < 20; sw++) {
+      let se = 0;
+      const ss = start + sw * subWin;
+      for (let i = ss; i < ss + subWin && i < end; i++) {
+        se += midPass[i] * midPass[i];
+      }
+      subEnergies.push(se / subWin);
+    }
+    const meanSubE = subEnergies.reduce((a, b) => a + b, 0) / subEnergies.length;
+    for (const se of subEnergies) {
+      spectralVariance += (se - meanSubE) * (se - meanSubE);
+    }
+    spectralVariance = Math.sqrt(spectralVariance / subEnergies.length);
+    // High variance in mid-band energy = likely melodic/vocal content
+    const harmonicScore = meanSubE > 0 ? Math.min(1, spectralVariance / meanSubE * 2) : 0;
+
+    // Combined vocal likelihood: mid-band dominance + ZCR in vocal range + harmonic structure
+    const midRatio = totalEnergy > 0.001 ? midEnergy / totalEnergy : 0;
+    const zcrScore = (zcr >= 100 && zcr <= 800 && totalEnergy > 0.02) ?
+      Math.min(1, Math.max(0, 1 - Math.abs(zcr - 400) / 400)) : 0;
+
+    vocalLikelihood[vw] = midRatio * 0.4 + zcrScore * 0.3 + harmonicScore * 0.3;
+  }
+
+  onsets._vocalLikelihood = vocalLikelihood;
+  onsets._vocalWindowSec = vocalWindowSec;
+
+  return onsets;
+}
+
+function estimateBPM(onsets, duration) {
+  if (onsets.length < 4) return 120;
+
+  // Compute inter-onset intervals
+  const intervals = [];
+  for (let i = 1; i < onsets.length; i++) {
+    intervals.push(onsets[i] - onsets[i - 1]);
+  }
+
+  // Histogram of intervals quantized to BPM range 60-200
+  // Weight intervals by amplitude (louder onsets = more reliable tempo indicators)
+  const bpmCounts = {};
+  const amps = onsets._onsetAmplitudes;
+  for (let i = 0; i < intervals.length; i++) {
+    const iv = intervals[i];
+    if (iv < 0.1 || iv > 2.0) continue;
+    // Weight by amplitude of both surrounding onsets
+    const weight = amps ? ((amps[i] || 0.3) + (amps[i + 1] || 0.3)) / 2 : 1;
+    // Try multiplying/dividing to map to reasonable BPM range
+    for (let mult = 1; mult <= 4; mult++) {
+      const adjIv = iv * mult;
+      const bpm = Math.round(60 / adjIv);
+      if (bpm >= 70 && bpm <= 200) {
+        const key = Math.round(bpm / 2) * 2; // round to nearest 2
+        bpmCounts[key] = (bpmCounts[key] || 0) + weight;
+      }
+    }
+  }
+
+  // Find top 3 BPM candidates
+  const candidates = Object.entries(bpmCounts)
+    .map(([bpm, count]) => ({ bpm: parseInt(bpm), count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3);
+
+  if (candidates.length === 0) return 120;
+
+  // Validate candidates: check how well onsets align to a grid at each BPM
+  let bestBPM = candidates[0].bpm;
+  let bestScore = -1;
+
+  for (const candidate of candidates) {
+    const bpmVal = candidate.bpm;
+    const beatInterval = 60 / bpmVal;
+    let alignScore = 0;
+
+    for (const t of onsets) {
+      // How close is this onset to the nearest beat grid position?
+      const nearestBeat = Math.round(t / beatInterval) * beatInterval;
+      const deviation = Math.abs(t - nearestBeat);
+      // Score inversely proportional to deviation (max 1 when on grid)
+      const devScore = Math.max(0, 1 - deviation / (beatInterval * 0.25));
+      const ampWeight = amps ? (amps[onsets.indexOf(t)] || 0.3) : 1;
+      alignScore += devScore * ampWeight;
+    }
+
+    if (alignScore > bestScore) {
+      bestScore = alignScore;
+      bestBPM = bpmVal;
+    }
+  }
+
+  return bestBPM;
+}
+
+function generateChartFromBeats(beats, bpm, duration, difficulty) {
+  const obstacles = [];
+  const beatS = 60 / bpm;
+  difficulty = difficulty || 'NORMAL';
+
+  // Waveform analysis thresholds
+  const SILENCE_AMP_THRESHOLD = 0.05;  // below this = nearly silent section
+  const QUIET_BEAT_AMP = 0.05;         // minimum amplitude for obstacle placement
+  const VOCAL_SONG_THRESHOLD = 0.08;   // overall vocal score >8% = vocal song
+  const VOCAL_SECTION_THRESHOLD = 0.10;// per-section vocal likelihood threshold
+  const CALM_NONMELODY_THIN_RATE = 0.45;// probability of removing non-melody beats in calm sections
+  const BREATHING_GAP_HARD = 20;       // consecutive obstacles before forced rest (HARD)
+  const BREATHING_GAP_EXPERT = 28;     // consecutive obstacles before forced rest (EXPERT)
+  const BREATHING_GAP_NORMAL = 6;      // consecutive obstacles before forced rest (NORMAL)
+
+  // Seeded random
+  let seed = bpm * 1000 + Math.floor(duration) * 7;
+  function rand() {
+    seed = (seed * 16807) % 2147483647;
+    return (seed & 0x7fffffff) / 0x7fffffff;
+  }
+
+  // Extract waveform amplitude data from beats array (added by detectBeats)
+  const ampEnvelope = beats._ampEnvelope;
+  const ampHopSize = beats._ampHopSize;
+  const ampSampleRate = beats._sampleRate;
+  const onsetAmplitudes = beats._onsetAmplitudes;
+  const onsetIsMelody = beats._onsetIsMelody;
+  const onsetPitchDir = beats._onsetPitchDir;
+  const vocalLikelihood = beats._vocalLikelihood;
+  const vocalWindowSec = beats._vocalWindowSec;
+  const hasAmpData = ampEnvelope && ampEnvelope.length > 0;
+
+  // Get amplitude at a given time
+  function getAmplitudeAt(t) {
+    if (!hasAmpData) return 0.5;
+    const idx = Math.floor((t * ampSampleRate) / ampHopSize);
+    if (idx >= 0 && idx < ampEnvelope.length) return ampEnvelope[idx];
+    return 0;
+  }
+
+  // Get average amplitude in a time window
+  function getAvgAmplitude(tStart, tEnd) {
+    if (!hasAmpData) return 0.5;
+    const idxStart = Math.max(0, Math.floor((tStart * ampSampleRate) / ampHopSize));
+    const idxEnd = Math.min(ampEnvelope.length - 1, Math.floor((tEnd * ampSampleRate) / ampHopSize));
+    if (idxEnd <= idxStart) return getAmplitudeAt(tStart);
+    let sum = 0;
+    for (let i = idxStart; i <= idxEnd; i++) sum += ampEnvelope[i];
+    return sum / (idxEnd - idxStart + 1);
+  }
+
+  // Detect if a section likely has vocals
+  function hasVocalsAt(t) {
+    if (!vocalLikelihood || vocalLikelihood.length === 0) return false;
+    const idx = Math.floor(t / vocalWindowSec);
+    if (idx >= 0 && idx < vocalLikelihood.length) return vocalLikelihood[idx] > VOCAL_SECTION_THRESHOLD;
+    return false;
+  }
+
+  // Check if the song overall has significant vocal content
+  let totalVocalScore = 0;
+  if (vocalLikelihood) {
+    for (let i = 0; i < vocalLikelihood.length; i++) totalVocalScore += vocalLikelihood[i];
+    totalVocalScore /= Math.max(1, vocalLikelihood.length);
+  }
+  const isVocalSong = totalVocalScore > VOCAL_SONG_THRESHOLD;
+
+  // ---- Beat quantization: snap onsets to nearest musical grid position ----
+  // This aligns obstacle placement with the actual beat grid for better musical feel
+  const quantizedBeats = [];
+  const gridSize = beatS / 8; // 32nd note grid
+  for (let bi = 0; bi < beats.length; bi++) {
+    const t = beats[bi];
+    // Snap to nearest grid position
+    const gridPos = Math.round(t / gridSize) * gridSize;
+    // Only add if not duplicate (within 20ms)
+    if (quantizedBeats.length === 0 || Math.abs(gridPos - quantizedBeats[quantizedBeats.length - 1]._t) > 0.02) {
+      quantizedBeats.push({
+        _t: gridPos,
+        _origIdx: bi,
+        _amp: onsetAmplitudes ? (onsetAmplitudes[bi] || 0) : 0.5,
+        _isMelody: onsetIsMelody ? onsetIsMelody[bi] : 0,
+        _pitchDir: onsetPitchDir ? onsetPitchDir[bi] : 0
+      });
+    }
+  }
+
+  // Analyze beat density to detect calm vs intense sections
+  // Divide song into windows and count beats per window
+  const windowSize = beatS * 8; // 2-bar windows
+  const beatDensity = [];
+  const maxT = duration;
+  for (let w = 0; w < maxT; w += windowSize) {
+    const count = quantizedBeats.filter(b => b._t >= w && b._t < w + windowSize).length;
+    // Also compute average amplitude in window for energy-based section detection
+    const avgAmp = getAvgAmplitude(w, w + windowSize);
+    beatDensity.push({ start: w, end: w + windowSize, count, avgAmp });
+  }
+  // Find median density for calm/intense threshold
+  const sortedCounts = beatDensity.map(d => d.count).sort((a, b) => a - b);
+  const medianDensity = sortedCounts[Math.floor(sortedCounts.length / 2)] || 1;
+  // Also compute amplitude-based intensity
+  const sortedAmps = beatDensity.map(d => d.avgAmp).sort((a, b) => a - b);
+  const medianAmp = sortedAmps[Math.floor(sortedAmps.length / 2)] || 0.3;
+
+  // Compute intensity score (0-1) for each window for dynamic density
+  for (let i = 0; i < beatDensity.length; i++) {
+    const d = beatDensity[i];
+    const densityScore = medianDensity > 0 ? d.count / medianDensity : 1;
+    const ampScore = medianAmp > 0 ? d.avgAmp / medianAmp : 1;
+    // Combine density and amplitude, clamp to 0-2
+    d.intensity = Math.min(2, densityScore * 0.4 + ampScore * 0.6);
+  }
+
+  function getIntensityAt(t) {
+    const idx = Math.floor(t / windowSize);
+    if (idx >= beatDensity.length) return 0;
+    return beatDensity[idx].intensity;
+  }
+
+  function isCalmAt(t) {
+    const idx = Math.floor(t / windowSize);
+    if (idx >= beatDensity.length) return true;
+    // Use both beat density AND amplitude for more accurate calm detection
+    const densityCalm = beatDensity[idx].count < medianDensity * 0.7;
+    const ampCalm = beatDensity[idx].avgAmp < medianAmp * 0.6;
+    return densityCalm || ampCalm;
+  }
+
+  function isIntenseAt(t) {
+    const idx = Math.floor(t / windowSize);
+    if (idx >= beatDensity.length) return false;
+    // More lenient for intensity detection: above-median density OR high amplitude
+    return (beatDensity[idx].count > medianDensity * 1.05 && beatDensity[idx].avgAmp > medianAmp * 0.9)
+        || beatDensity[idx].avgAmp > medianAmp * 1.3;
+  }
+
+  // Detect silent/near-silent sections using waveform amplitude
+  function isSilentAt(t) {
+    const idx = Math.floor(t / windowSize);
+    if (idx >= beatDensity.length) return true;
+    if (beatDensity[idx].count <= 1) return true;
+    if (hasAmpData) {
+      const wStart = idx * windowSize;
+      const wEnd = wStart + windowSize;
+      const avgAmp = getAvgAmplitude(wStart, wEnd);
+      if (avgAmp < SILENCE_AMP_THRESHOLD) return true;
+    }
+    return false;
+  }
+
+  // ---- Improved section detection using energy contour ----
+  // Detect intro/outro by amplitude ramp-up/ramp-down
+  function getSectionAt(t) {
+    const progress = t / duration;
+    const localAmp = getAmplitudeAt(t);
+
+    // First few seconds or very quiet start = intro
+    if (progress < 0.08 || (progress < 0.15 && localAmp < medianAmp * 0.4)) return 'intro';
+    // Last section or very quiet end = outro
+    if (progress >= 0.92 || (progress >= 0.85 && localAmp < medianAmp * 0.4)) return 'outro';
+    // Before last high-energy section
+    if (progress >= 0.72 && progress < 0.78 && isCalmAt(t)) return 'before_last_chorus';
+
+    // Use amplitude contour for more accurate section detection
+    if (isCalmAt(t)) return 'calm';
+    return 'intense';
+  }
+
+  // ---- Compute local amplitude context for each onset ----
+  // Instead of a single global percentile, use local context windows
+  function getLocalAmpThreshold(t) {
+    // Get amplitude in a ±4 beat window around this time
+    const windowHalf = beatS * 4;
+    const tStart = Math.max(0, t - windowHalf);
+    const tEnd = Math.min(duration, t + windowHalf);
+    // Collect amplitudes of nearby onsets
+    const nearbyAmps = [];
+    for (const qb of quantizedBeats) {
+      if (qb._t >= tStart && qb._t <= tEnd) nearbyAmps.push(qb._amp);
+    }
+    if (nearbyAmps.length < 3) return 0.1; // too few neighbors, accept most
+    nearbyAmps.sort((a, b) => a - b);
+    // Use 25th percentile of local amplitudes as threshold
+    return nearbyAmps[Math.floor(nearbyAmps.length * 0.25)] || 0.1;
+  }
+
+  // Skip first CHART_START_OFFSET seconds, stop 2s before end
+  const startT = CHART_START_OFFSET;
+  const endT = duration - 2.0;
+  let lastType = -1;
+  let lastTime = -1;
+  // Minimum gap based on difficulty, scaled by scroll speed
+  // Scroll speed only affects visual spacing, NOT obstacle count
+  const baseMinGapHard = beatS * 0.22;    // HARD: tight 16th-note density
+  const baseMinGapExpert = beatS / 6;     // EXPERT: 24th-note density (8th-note triplet)
+  const baseMinGapNormal = beatS * 0.60;
+
+  // Dynamic minimum gap: tighter in intense sections, wider in calm sections
+  // This creates the pacing variation players want
+  function getDynamicMinGap(t) {
+    const section = getSectionAt(t);
+    const intensity = getIntensityAt(t);
+    let base;
+    if (section === 'intro' || section === 'outro') {
+      // Very wide gaps in intro/outro for breathing room
+      base = difficulty === 'EXPERT' ? beatS * 0.45 : difficulty === 'HARD' ? beatS * 0.55 : beatS * 1.00;
+    } else if (section === 'calm' || section === 'before_last_chorus') {
+      // Wide gaps in calm sections — clear contrast with intense parts
+      base = difficulty === 'EXPERT' ? beatS * 0.35 : difficulty === 'HARD' ? beatS * 0.45 : beatS * 0.80;
+    } else if (isIntenseAt(t)) {
+      // Tight gaps in intense sections — this is where the challenge lives
+      base = difficulty === 'EXPERT' ? baseMinGapExpert : difficulty === 'HARD' ? baseMinGapHard : baseMinGapNormal;
+    } else {
+      // Default moderate
+      base = difficulty === 'EXPERT' ? beatS * 0.25 : difficulty === 'HARD' ? beatS * 0.35 : beatS * 0.70;
+    }
+    return base;
+  }
+
+  // Track consecutive obstacle count for periodic breathing gaps
+  let consecutiveCount = 0;
+  const BREATHING_GAP_INTERVAL = difficulty === 'EXPERT' ? BREATHING_GAP_EXPERT : difficulty === 'HARD' ? BREATHING_GAP_HARD : BREATHING_GAP_NORMAL;
+  const BREATHING_GAP_DURATION = difficulty === 'EXPERT' ? beatS * 0.8 : difficulty === 'HARD' ? beatS * 1.0 : beatS * 1.5;
+
+  for (let qi = 0; qi < quantizedBeats.length; qi++) {
+    const qb = quantizedBeats[qi];
+    const t = qb._t;
+    const bi = qb._origIdx;
+    if (t < startT || t > endT) continue;
+
+    // Dynamic minimum gap based on section
+    const currentMinGap = getDynamicMinGap(t);
+    if (t - lastTime < currentMinGap) continue;
+
+    // Periodic breathing gaps — even in dense sections, insert brief rests
+    // so the pattern doesn't feel monotonous
+    if (consecutiveCount >= BREATHING_GAP_INTERVAL && !isCalmAt(t)) {
+      if (t - lastTime < BREATHING_GAP_DURATION) continue;
+      consecutiveCount = 0; // reset after breathing gap
+    }
+
+    // Skip silent sections — no obstacles in silent parts
+    if (isSilentAt(t)) continue;
+
+    // ---- Improved amplitude filtering: strongly favor melody onsets ----
+    // The goal: keep beats that a human would naturally tap along to —
+    // prominent melody notes, strong drum hits, vocal phrases
+    if (hasAmpData && onsetAmplitudes) {
+      const beatAmp = qb._amp;
+      const localAmp = getAmplitudeAt(t);
+      const isVocalSection = isVocalSong && hasVocalsAt(t);
+      const isMelodyOnset = qb._isMelody;
+      const localThreshold = getLocalAmpThreshold(t);
+      const intense = isIntenseAt(t);
+
+      if (isMelodyOnset) {
+        // Melody onset: these are the core musical moments players can identify.
+        // Keep almost all of them — only filter truly inaudible ones
+        if (beatAmp < localThreshold * 0.08 && localAmp < QUIET_BEAT_AMP * 0.5) continue;
+      } else if (isVocalSection) {
+        // Vocal section: keep melody-like onsets, lightly filter weak percussion
+        if (beatAmp < localThreshold * 0.15 && localAmp < QUIET_BEAT_AMP) continue;
+      } else if (isVocalSong && !isVocalSection) {
+        // Instrumental interlude in vocal song: keep strong, prominent hits
+        if (beatAmp < localThreshold * 0.40) continue;
+        if (beatAmp < localThreshold * 0.60 && rand() < 0.3) continue;
+      } else {
+        // Fully instrumental: keep prominent, rhythmically obvious beats
+        if (beatAmp < localThreshold * 0.30) continue;
+        if (beatAmp < localThreshold * 0.50 && rand() < 0.25) continue;
+      }
+
+      // In calm sections, thin out non-melody beats more aggressively
+      // so obstacles clearly map to the main musical elements
+      if (isCalmAt(t) && !isMelodyOnset) {
+        if (rand() < CALM_NONMELODY_THIN_RATE) continue;
+      }
+    }
+
+    const r = rand();
+    const section = getSectionAt(t);
+    const isMelodyOnset = qb._isMelody;
+    const pitchDir = qb._pitchDir; // +1 rising, -1 falling, 0 neutral
+    let typeIdx;
+
+    if (section === 'intro' || section === 'outro' || section === 'calm' || section === 'before_last_chorus') {
+      // Calm/intro/outro: stars more frequent (reduced in HARD mode to keep ≤10% overall)
+      const baseStarChance = (section === 'before_last_chorus') ? 0.50
+                       : (section === 'intro' || section === 'outro') ? 0.45
+                       : 0.40;
+      const starChance = (difficulty === 'HARD' || difficulty === 'EXPERT') ? Math.min(baseStarChance, 0.15) : baseStarChance;
+      if (r < starChance / 2) typeIdx = 4;       // STAR_R
+      else if (r < starChance) typeIdx = 5;       // STAR_L
+      else if (r < starChance + 0.20) typeIdx = 0; // PYLON_R
+      else if (r < starChance + 0.40) typeIdx = 1; // PYLON_L
+      else typeIdx = r < starChance + 0.55 ? 2 : 3; // ARCH or BLOCK
+    } else {
+      // Intense sections: use pitch direction for melody-driven obstacle types
+      if (isMelodyOnset) {
+        if (pitchDir > 0) {
+          // Rising melody → jump (BLOCK) or right dodge
+          if (r < 0.40) typeIdx = 3;       // BLOCK (jump!) — feels like rising
+          else if (r < 0.60) typeIdx = 0;  // PYLON_R
+          else if (r < 0.80) typeIdx = 1;  // PYLON_L
+          else typeIdx = 2;                // ARCH
+        } else if (pitchDir < 0) {
+          // Falling melody → duck (ARCH) or left dodge
+          if (r < 0.40) typeIdx = 2;       // ARCH (duck!) — feels like descending
+          else if (r < 0.60) typeIdx = 1;  // PYLON_L
+          else if (r < 0.80) typeIdx = 0;  // PYLON_R
+          else typeIdx = 3;                // BLOCK
+        } else {
+          // Neutral/sustained melody → side dodges for rhythmic flow
+          if (r < 0.30) typeIdx = 0;       // PYLON_R
+          else if (r < 0.60) typeIdx = 1;  // PYLON_L
+          else if (r < 0.78) typeIdx = 2;  // ARCH
+          else typeIdx = 3;                // BLOCK
+        }
+      } else {
+        // Percussion-only beats: favor jumps/ducks for percussive impact
+        if (r < 0.18) typeIdx = 0;       // PYLON_R
+        else if (r < 0.36) typeIdx = 1;  // PYLON_L
+        else if (r < 0.63) typeIdx = 3;  // BLOCK (jump!)
+        else typeIdx = 2;                // ARCH (duck!)
+      }
+
+      // In non-HARD/EXPERT mode, add small star chance in intense sections
+      if (difficulty !== 'HARD' && difficulty !== 'EXPERT') {
+        if (r > 0.95) typeIdx = r < 0.975 ? 4 : 5; // ~5% STAR in intense sections
+      }
+    }
+
+    // Avoid same consecutive type
+    if (typeIdx === lastType) {
+      typeIdx = (typeIdx + 1 + Math.floor(rand() * 4)) % 6;
+    }
+    lastType = typeIdx;
+    lastTime = t;
+    consecutiveCount++;
+
+    obstacles.push({
+      time: t,
+      type: OBS_TYPES[typeIdx],
+      judged: false,
+      judgment: null,
+      hitTime: 0
+    });
+  }
+
+  // HARD/EXPERT mode: insert additional obstacles between existing beats at musically relevant points
+  // HARD fills in 16th-note gaps; EXPERT fills in 24th-note (triplet) gaps in intense sections
+  if (difficulty === 'HARD' || difficulty === 'EXPERT') {
+    const sixteenthS = beatS / 4; // 16th note duration
+    const twentyfourthS = beatS / 6; // 24th note (8th-note triplet) duration
+    const insertGridS = difficulty === 'EXPERT' ? twentyfourthS : sixteenthS;
+    const extraObs = [];
+    for (let i = 0; i < obstacles.length - 1; i++) {
+      const gap = obstacles[i + 1].time - obstacles[i].time;
+      const midT = obstacles[i].time + gap * 0.5;
+      // Only insert extras in intense sections
+      if (!isIntenseAt(midT)) continue;
+      // Use tighter minimum gap for extras
+      const extraMinGap = insertGridS * 0.9;
+      // If gap is large enough for at least one extra obstacle
+      if (gap > insertGridS * 2.2) {
+        // Try to insert multiple obstacles at grid positions
+        const maxInserts = difficulty === 'EXPERT' ? 5 : 4;
+        const numInserts = Math.min(maxInserts, Math.floor(gap / (insertGridS * 1.1)) - 1);
+        for (let ins = 1; ins <= numInserts; ins++) {
+          const insertT = obstacles[i].time + gap * (ins / (numInserts + 1));
+          // Snap to nearest grid position (32nd note grid)
+          const snappedT = Math.round(insertT / gridSize) * gridSize;
+          // Check spacing from all existing and newly inserted obstacles
+          const gapBefore = snappedT - obstacles[i].time;
+          const gapAfter = obstacles[i + 1].time - snappedT;
+          // Check against already-inserted extras too
+          let tooClose = false;
+          for (const ex of extraObs) {
+            if (Math.abs(ex.time - snappedT) < extraMinGap) { tooClose = true; break; }
+          }
+          if (tooClose) continue;
+          if (gapBefore < extraMinGap || gapAfter < extraMinGap) continue;
+          if (snappedT > startT && snappedT < endT && !isSilentAt(snappedT)) {
+            const midAmp = hasAmpData ? getAmplitudeAt(snappedT) : 0.5;
+            if (midAmp < QUIET_BEAT_AMP * 0.8) continue;
+            let typeIdx = Math.floor(rand() * 4);
+            if (OBS_TYPES[typeIdx] === obstacles[i].type) typeIdx = (typeIdx + 1) % 4;
+            extraObs.push({
+              time: snappedT,
+              type: OBS_TYPES[typeIdx],
+              judged: false,
+              judgment: null,
+              hitTime: 0
+            });
+          }
+        }
+      }
+    }
+    obstacles.push(...extraObs);
+  }
+
+  // Final pass: enforce minimum visual spacing by removing obstacles that are too close
+  obstacles.sort((a, b) => a.time - b.time);
+  for (let i = obstacles.length - 1; i > 0; i--) {
+    // In HARD/EXPERT mode, use tighter enforcement so dense note runs survive
+    const enforceMult = difficulty === 'EXPERT' ? 0.55 : difficulty === 'HARD' ? 0.65 : 0.90;
+    const finalMinGap = getDynamicMinGap(obstacles[i].time) * enforceMult;
+    if (obstacles[i].time - obstacles[i - 1].time < finalMinGap) {
+      obstacles.splice(i, 1);
+    }
+  }
+
+  return obstacles;
+}
+
+// Handle MP3 file drop
+function handleMP3Drop(file) {
+  if (!file || !file.type.startsWith('audio/')) {
+    mp3LoadingMsg = '音声ファイルではありません！';
+    setTimeout(() => { mp3LoadingMsg = ''; }, 2000);
+    return;
+  }
+  mp3LoadingMsg = '読み込み中: ' + file.name + '...';
+  initAudio();
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    mp3LoadingMsg = 'ビートを解析中...';
+    audioCtx.decodeAudioData(e.target.result, function(buffer) {
+      customAudioBuffer = buffer;
+      const duration = buffer.duration;
+      const beats = detectBeats(buffer);
+      const bpm = estimateBPM(beats, duration);
+      customDetectedBPM = bpm;
+      customSongBeats = beats;
+
+      // Calculate bars from duration
+      const beatSec = 60 / bpm;
+      const totalBeats = Math.floor(duration / beatSec);
+      const bars = Math.max(8, Math.floor(totalBeats / 4));
+
+      // Trim filename for display
+      let displayName = file.name.replace(/\.[^/.]+$/, '');
+      if (displayName.length > 18) displayName = displayName.substring(0, 18) + '…';
+
+      // Remove previous custom song entry if exists
+      while (SONGS.length > 4) {
+        SONGS.pop();
+        SONG_DATA.pop();
+      }
+
+      // Add custom song to SONGS array
+      SONGS.push({
+        name: displayName,
+        bpm: bpm,
+        bars: bars,
+        color: '#00ff88',
+        desc: 'BPM ' + bpm + ' — カスタムMP3'
+      });
+
+      // Add a dummy SONG_DATA entry (won't be used for synth)
+      SONG_DATA.push(SONG_DATA[0]); // placeholder
+
+      // Select the custom song
+      songSelectIndex = SONGS.length - 1;
+      mp3LoadingMsg = '✓ ' + displayName + ' (BPM ' + bpm + ', ' + beats.length + ' ビート)';
+      setTimeout(() => { mp3LoadingMsg = ''; }, 3000);
+    }, function(err) {
+      mp3LoadingMsg = '音声のデコードに失敗しました！';
+      setTimeout(() => { mp3LoadingMsg = ''; }, 2000);
+    });
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Update custom song BPM (user override)
+function updateCustomBPM(newBPM) {
+  if (songSelectIndex < 4 || !customAudioBuffer) return;
+  const song = SONGS[songSelectIndex];
+  song.bpm = newBPM;
+  const beatSec = 60 / newBPM;
+  const totalBeats = Math.floor(customAudioBuffer.duration / beatSec);
+  song.bars = Math.max(8, Math.floor(totalBeats / 4));
+  const autoLabel = customDetectedBPM ? ' (自動検出: ' + customDetectedBPM + ')' : '';
+  song.desc = 'BPM ' + newBPM + autoLabel + ' — カスタムMP3';
+}
+
+
+// Build the default Minecraft skin canvas (64x64) procedurally
+function buildDefaultSkin() {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  const g = c.getContext('2d');
+  // Helper: fill a region with a solid color
+  function fill(x,y,w,h,col) { g.fillStyle = col; g.fillRect(x,y,w,h); }
+
+  // ---- Head (front: 8,8 → 16,16) ----
+  // Skin base
+  fill(0, 0, 32, 16, '#ffe5d0');   // all head regions skin base
+  // Head front face
+  fill(8, 8, 8, 8, '#ffe5d0');
+  // Eyes (at row 11–12, cols 10–11 and 13–14)
+  fill(10, 11, 2, 1, '#bb4488'); fill(13, 11, 2, 1, '#bb4488');
+  // Pupils
+  fill(10, 12, 1, 1, '#220022'); fill(14, 12, 1, 1, '#220022');
+  // Mouth
+  fill(11, 14, 2, 1, '#cc6688');
+  // Hair top (8,0 → 16,8) golden blonde
+  fill(8, 0, 8, 8, '#e8b830');
+  // Hair bangs on forehead (top rows of face)
+  fill(8, 8, 8, 2, '#e8b830');
+  fill(8, 8, 2, 4, '#e8b830');  // left side bang
+  fill(14, 8, 2, 4, '#e8b830'); // right side bang
+  // Head right side (0,8 → 8,16) — hair
+  fill(0, 8, 8, 8, '#d4a020');
+  // Head left side (16,8 → 24,16) — hair
+  fill(16, 8, 8, 8, '#d4a020');
+  // Head back (24,8 → 32,16) — hair
+  fill(24, 8, 8, 8, '#c89018');
+
+  // ---- Body (front: 20,20 → 28,32) ----
+  // Black shirt
+  fill(20, 20, 8, 12, '#222222');
+  // Pink stripes
+  fill(20, 22, 8, 1, '#cc4488');
+  fill(20, 25, 8, 1, '#cc4488');
+  fill(20, 28, 8, 1, '#cc4488');
+  // Skull design center
+  fill(23, 23, 2, 2, '#ffffff');
+  fill(22, 26, 4, 1, '#ffffff');
+  // Body back (32,20 → 40,32)
+  fill(32, 20, 8, 12, '#1a1a1a');
+  // Body top/bottom/sides
+  fill(20, 16, 8, 4, '#222222');
+  fill(28, 20, 4, 12, '#222222');
+  fill(16, 20, 4, 12, '#222222');
+
+  // ---- Right Arm (front: 44,20 → 48,32) ----
+  fill(40, 16, 16, 4, '#222222');  // arm top+bottom
+  fill(40, 20, 4, 12, '#222222');  // arm right
+  fill(44, 20, 4, 12, '#222222');  // arm front — black shirt sleeve
+  fill(44, 28, 4, 4, '#ffe5d0');   // hand (skin)
+  fill(48, 20, 4, 12, '#222222');  // arm left
+  fill(52, 20, 4, 12, '#1a1a1a');  // arm back
+
+  // ---- Left Arm (front: 36,52 → 40,64) ---- (64x64 format)
+  fill(32, 48, 16, 4, '#222222');
+  fill(32, 52, 4, 12, '#222222');
+  fill(36, 52, 4, 12, '#222222');  // front — sleeve
+  fill(36, 60, 4, 4, '#ffe5d0');   // hand
+  fill(40, 52, 4, 12, '#222222');
+  fill(44, 52, 4, 12, '#1a1a1a');
+
+  // ---- Right Leg (front: 4,20 → 8,32) ----
+  fill(0, 16, 16, 4, '#6688aa');
+  fill(0, 20, 4, 12, '#6688aa');
+  fill(4, 20, 4, 12, '#6688aa');   // front — jeans
+  fill(4, 28, 4, 4, '#333344');    // boots
+  fill(8, 20, 4, 12, '#6688aa');
+  fill(12, 20, 4, 12, '#556688');
+
+  // ---- Left Leg (front: 20,52 → 24,64) ----
+  fill(16, 48, 16, 4, '#6688aa');
+  fill(16, 52, 4, 12, '#6688aa');
+  fill(20, 52, 4, 12, '#6688aa');  // front — jeans
+  fill(20, 60, 4, 4, '#333344');   // boots
+  fill(24, 52, 4, 12, '#6688aa');
+  fill(28, 52, 4, 12, '#556688');
+
+  return c;
+}
+
+// Handle avatar image drop — parse Minecraft skin PNG (64x64 or 64x32)
+function handleAvatarDrop(file) {
+  if (!file || !file.type.startsWith('image/')) {
+    avatarLoadingMsg = '画像ファイルではありません！';
+    setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
+    return;
+  }
+  avatarLoadingMsg = 'スキンを解析中...';
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const img = new Image();
+    img.onload = function() {
+      const w = img.width, h = img.height;
+      // Validate Minecraft skin dimensions (64x64 or 64x32)
+      if (!((w === 64 && h === 64) || (w === 64 && h === 32))) {
+        avatarLoadingMsg = 'マイクラスキン (64x64 or 64x32) ではありません！';
+        setTimeout(() => { avatarLoadingMsg = ''; }, 3000);
+        return;
+      }
+
+      // Draw to 64x64 canvas (if 64x32, mirror arms/legs)
+      const skinCanvas = document.createElement('canvas');
+      skinCanvas.width = 64;
+      skinCanvas.height = 64;
+      const sCtx = skinCanvas.getContext('2d');
+      sCtx.imageSmoothingEnabled = false;
+      sCtx.drawImage(img, 0, 0);
+
+      // If old format (64x32), mirror right arm/leg to left arm/leg slots
+      if (h === 32) {
+        // Mirror right arm (40,16 16x16) → left arm (32,48 16x16)
+        sCtx.save();
+        sCtx.translate(48, 48);
+        sCtx.scale(-1, 1);
+        sCtx.drawImage(img, 40, 16, 16, 16, 0, 0, 16, 16);
+        sCtx.restore();
+        // Mirror right leg (0,16 16x16) → left leg (16,48 16x16)
+        sCtx.save();
+        sCtx.translate(32, 48);
+        sCtx.scale(-1, 1);
+        sCtx.drawImage(img, 0, 16, 16, 16, 0, 0, 16, 16);
+        sCtx.restore();
+      }
+
+      skinTexture = skinCanvas;
+      avatarCustom = { skinCanvas: skinCanvas };
+      skinHasHat = checkSkinHasHat(skinCanvas);
+
+      avatarLoadingMsg = '✓ マイクラスキンを適用しました！';
+      setTimeout(() => { avatarLoadingMsg = ''; }, 3000);
+    };
+    img.onerror = function() {
+      avatarLoadingMsg = '画像の読み込みに失敗しました！';
+      setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// Initialize default skin on startup
+let defaultSkinCanvas = null;
+function getDefaultSkin() {
+  if (!defaultSkinCanvas) defaultSkinCanvas = buildDefaultSkin();
+  return defaultSkinCanvas;
+}
+// Check if skin hat overlay (40,8 → 48,16) has visible pixels
+function checkSkinHasHat(skinCanvas) {
+  const sCtx = skinCanvas.getContext('2d');
+  const hatData = sCtx.getImageData(40, 8, 8, 8).data;
+  for (let i = 3; i < hatData.length; i += 4) {
+    if (hatData[i] > 10) return true;
+  }
+  return false;
+}
+// Get the active skin canvas (custom or default)
+function getActiveSkin() {
+  return skinTexture || getDefaultSkin();
+}
+
+function playKick(time) {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.connect(g); g.connect(masterGain);
+  o.type = 'sine';
+  o.frequency.setValueAtTime(curSongData.kickPitch, time);
+  o.frequency.exponentialRampToValueAtTime(40, time + 0.08);
+  g.gain.setValueAtTime(1.0, time);
+  g.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
+  o.start(time); o.stop(time + 0.3);
+}
+
+function playSnare(time) {
+  const len = Math.floor(audioCtx.sampleRate * 0.12);
+  const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  const n = audioCtx.createBufferSource(); n.buffer = buf;
+  const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 1200;
+  const g = audioCtx.createGain();
+  n.connect(f); f.connect(g); g.connect(masterGain);
+  g.gain.setValueAtTime(0.7, time);
+  g.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+  n.start(time); n.stop(time + 0.15);
+}
+
+function playHihat(time, open) {
+  const len = Math.floor(audioCtx.sampleRate * 0.06);
+  const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  const n = audioCtx.createBufferSource(); n.buffer = buf;
+  const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 7000;
+  const g = audioCtx.createGain();
+  n.connect(f); f.connect(g); g.connect(masterGain);
+  const dur = open ? 0.12 : 0.04;
+  g.gain.setValueAtTime(0.25, time);
+  g.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  n.start(time); n.stop(time + dur);
+}
+
+function playBass(time, freq, dur) {
+  dur = dur || 0.22;
+  const o = audioCtx.createOscillator();
+  const f = audioCtx.createBiquadFilter();
+  const g = audioCtx.createGain();
+  o.type = 'sawtooth'; f.type = 'lowpass'; f.frequency.value = curSongData.bassFilter;
+  o.connect(f); f.connect(g); g.connect(masterGain);
+  o.frequency.setValueAtTime(freq, time);
+  g.gain.setValueAtTime(curSongData.bassGain, time);
+  g.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  o.start(time); o.stop(time + dur);
+}
+
+function playSynth(time, freq, dur) {
+  const o1 = audioCtx.createOscillator(), o2 = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o1.type = curSongData.synthType; o2.type = curSongData.synthType;
+  o1.frequency.setValueAtTime(freq, time);
+  o2.frequency.setValueAtTime(freq * 1.006, time);
+  o1.connect(g); o2.connect(g); g.connect(masterGain);
+  g.gain.setValueAtTime(curSongData.synthGain, time);
+  g.gain.setValueAtTime(curSongData.synthGain, time + dur * 0.75);
+  g.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  o1.start(time); o2.start(time);
+  o1.stop(time + dur); o2.stop(time + dur);
+}
+
+// SFX
+function sfxPerfect(t) {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.connect(g); g.connect(masterGain);
+  o.type = 'sine'; o.frequency.setValueAtTime(880, t);
+  g.gain.setValueAtTime(0.3, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+  o.start(t); o.stop(t + 0.12);
+  const o2 = audioCtx.createOscillator(), g2 = audioCtx.createGain();
+  o2.connect(g2); g2.connect(masterGain);
+  o2.type = 'sine'; o2.frequency.setValueAtTime(1320, t + 0.05);
+  g2.gain.setValueAtTime(0.2, t + 0.05);
+  g2.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+  o2.start(t + 0.05); o2.stop(t + 0.15);
+}
+
+function sfxGreat(t) {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.connect(g); g.connect(masterGain);
+  o.type = 'sine'; o.frequency.setValueAtTime(660, t);
+  g.gain.setValueAtTime(0.25, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.10);
+  o.start(t); o.stop(t + 0.10);
+}
+
+function sfxMiss(t) {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.connect(g); g.connect(masterGain);
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(150, t);
+  o.frequency.exponentialRampToValueAtTime(50, t + 0.15);
+  g.gain.setValueAtTime(0.25, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+  o.start(t); o.stop(t + 0.15);
+}
+
+// Audio scheduler
+function scheduleAudio() {
+  if (!audioCtx || gameState !== 'PLAYING') return;
+  // Skip synth scheduling for custom MP3 songs
+  if (isCustomSong) {
+    // Still track beats for visual beat flash
+    while (nextStepTime < audioCtx.currentTime + 0.1) {
+      const step = stepCount % 16;
+      if (step === 0) { beatCount++; beatFlash = 1.0; }
+      stepCount++;
+      nextStepTime += STEP_S;
+    }
+    return;
+  }
+  const sd = curSongData;
+  while (nextStepTime < audioCtx.currentTime + 0.1) {
+    const step = stepCount % 16;
+    const t = nextStepTime;
+    if (sd.kick.has(step))  playKick(t);
+    if (sd.snare.has(step)) playSnare(t);
+    if (sd.ohihat.has(step)) playHihat(t, true);
+    else playHihat(t, false);
+    if (sd.bassSteps.has(step)) {
+      playBass(t, sd.bass[Math.floor(stepCount / 2) % sd.bass.length]);
+    }
+    if (sd.synthSteps.has(step)) {
+      const ni = sd.melody[melodyPos % sd.melody.length];
+      if (ni >= 0) playSynth(t, sd.scale[ni % sd.scale.length], BEAT_S * 0.85);
+      melodyPos++;
+    }
+    if (step === 0) { beatCount++; beatFlash = 1.0; }
+    stepCount++;
+    nextStepTime += STEP_S;
+  }
+}
+
+// ============================================================
+// OBSTACLE CHART GENERATOR — rhythm-synced
+// ============================================================
+function generateChart() {
+  const obstacles = [];
+  const bt = BEAT_S;
+  const st = STEP_S; // 16th note duration
+
+  // Seeded pseudo-random for repeatable charts per song
+  let seed = BPM * 1000 + SONG_BARS * 7;
+  function rand() {
+    seed = (seed * 16807) % 2147483647;
+    return (seed & 0x7fffffff) / 0x7fffffff;
+  }
+
+  // Build step patterns FROM the song's actual drum data so obstacles land on audible beats
+  const sd = curSongData;
+  const kickArr = [...sd.kick].sort((a,b) => a - b);
+  const snareArr = [...sd.snare].sort((a,b) => a - b);
+  const hihatArr = [...sd.ohihat].sort((a,b) => a - b);
+  const synthArr = [...sd.synthSteps].sort((a,b) => a - b);
+
+  // Easy: strong kicks only (beats 1 & 3, or first two distinct kicks)
+  const easySteps   = kickArr.length >= 4 ? [kickArr[0], kickArr[2]] : [kickArr[0], kickArr[Math.min(1, kickArr.length-1)]];
+  // Normal: all kick positions = quarter-note feel aligned with actual kicks
+  const normalSteps = kickArr.slice();
+  // Hard: kicks + snares + some hihats for syncopation (deduplicated)
+  const hardSet = new Set([...kickArr, ...snareArr, ...hihatArr.filter((_,i) => i % 2 === 0)]);
+  const hardSteps   = [...hardSet].sort((a,b) => a - b);
+  // Expert: kicks + snares + all hihats = full 8th-note coverage
+  const expertSet = new Set([...kickArr, ...snareArr, ...hihatArr]);
+  const expertSteps = [...expertSet].sort((a,b) => a - b);
+  // 16th-note patterns for Chaos Protocol (song 3)
+  const expert16thA = [0, 2, 3, 4, 6, 8, 10, 11, 12, 14]; // 16th bursts mixed with 8ths
+  const expert16thB = [0, 1, 4, 6, 7, 8, 10, 12, 13, 14, 15]; // dense 16th runs
+  const expert16thC = [0, 2, 4, 5, 6, 8, 10, 12, 13, 14];    // syncopated 16ths
+
+  // Precompute which bars have audible melody (not all -1 entries)
+  // Track melody position per bar to determine if a bar has silence
+  function barHasMelody(bar) {
+    // Count melody notes that play in this bar
+    // Each bar = 16 steps, synth plays on synthSteps, melody advances per synthStep
+    let melPos = 0;
+    // Count total synth steps before this bar
+    for (let b = 0; b < bar; b++) {
+      for (const step of synthArr) {
+        melPos++;
+      }
+    }
+    // Check synth steps in this bar
+    let hasNote = false;
+    for (const step of synthArr) {
+      const ni = sd.melody[melPos % sd.melody.length];
+      if (ni >= 0) hasNote = true;
+      melPos++;
+    }
+    return hasNote;
+  }
+
+  function barHasDrums(bar) {
+    // All bars have the same drum pattern repeated, so check if any drums exist
+    return sd.kick.size > 0 || sd.snare.size > 0;
+  }
+
+  // Check if a bar is silent (no melody notes and effectively silent drums)
+  function barIsSilent(bar) {
+    // First 2 bars are intro — silent
+    if (bar < 2) return true;
+    // Last 2 bars — silent (outro)
+    if (bar >= SONG_BARS - 2) return true;
+    // Check melody: if all melody notes in this bar are -1 (rest), it's melodically silent
+    if (!barHasMelody(bar) && !barHasDrums(bar)) return true;
+    return false;
+  }
+
+  // Determine musical section based on song structure
+  // Returns: 'intro', 'a_melo', 'b_melo', 'chorus', 'breakdown', 'last_chorus', 'outro'
+  function getSection(bar) {
+    const progress = bar / SONG_BARS;
+    if (progress < 0.10) return 'intro';        // ~first 10% = intro
+    if (progress < 0.25) return 'a_melo';        // ~10-25% = A melody (low density)
+    if (progress < 0.40) return 'b_melo';        // ~25-40% = B melody (medium density)
+    if (progress < 0.55) return 'chorus';        // ~40-55% = first chorus (high density)
+    if (progress < 0.65) return 'breakdown';     // ~55-65% = breakdown/interlude (calm)
+    if (progress < 0.80) return 'b_melo';        // ~65-80% = B melody reprise
+    if (progress < 0.92) return 'last_chorus';   // ~80-92% = last chorus (highest density)
+    return 'outro';                               // ~92-100% = outro
+  }
+
+  // Section density and star probability
+  function sectionConfig(section) {
+    switch (section) {
+      case 'intro':        return { density: 'easy',   starChance: 0.50, isCalm: true };
+      case 'a_melo':       return { density: 'easy',   starChance: 0.35, isCalm: true };
+      case 'b_melo':       return { density: 'normal', starChance: 0.15, isCalm: false };
+      case 'chorus':       return { density: 'hard',   starChance: 0.05, isCalm: false };
+      case 'breakdown':    return { density: 'easy',   starChance: 0.45, isCalm: true };
+      case 'last_chorus':  return { density: 'expert', starChance: 0.03, isCalm: false };
+      case 'outro':        return { density: 'easy',   starChance: 0.40, isCalm: true };
+      default:             return { density: 'normal', starChance: 0.10, isCalm: false };
+    }
+  }
+
+  // Before last chorus, add extra stars (ラスサビ前)
+  function isBeforeLastChorus(bar) {
+    const progress = bar / SONG_BARS;
+    return progress >= 0.75 && progress < 0.80; // 2-3 bars before last chorus
+  }
+
+  // Type selection: melody-driven (70%) vs drum-driven (30%)
+  // Melody: synth steps get placed. Drums: kick/snare/hihat steps get placed.
+  function pickType(step, r, isCalm, starChance) {
+    const isKick = sd.kick.has(step);
+    const isSnare = sd.snare.has(step);
+    const isHihat = sd.ohihat.has(step);
+    const isSynth = sd.synthSteps.has(step);
+
+    // Star placement based on starChance
+    if (r < starChance) {
+      return r < starChance / 2 ? 4 : 5; // STAR_R or STAR_L
+    }
+
+    // Calm sections: more stars, gentler obstacles
+    if (isCalm) {
+      const rr = (r - starChance) / (1 - starChance); // renormalize
+      if (rr < 0.30) return 0;      // PYLON_R
+      else if (rr < 0.60) return 1; // PYLON_L
+      else if (rr < 0.80) return 2; // ARCH
+      else return 3;                 // BLOCK
+    }
+
+    // Intense sections: obstacle type based on drum vs melody feel
+    if (isKick && !isSnare) {
+      // Kick: jump or side dodge
+      if (r < 0.30) return 3;      // BLOCK (jump)
+      else if (r < 0.55) return 0; // PYLON_R
+      else if (r < 0.80) return 1; // PYLON_L
+      else return 2;               // ARCH (duck)
+    } else if (isSnare) {
+      // Snare: duck or jump
+      if (r < 0.35) return 2;      // ARCH (duck)
+      else if (r < 0.60) return 3; // BLOCK (jump)
+      else if (r < 0.80) return 0; // PYLON_R
+      else return 1;               // PYLON_L
+    } else if (isSynth) {
+      // Melody-driven: variety
+      if (r < 0.25) return 0;
+      else if (r < 0.50) return 1;
+      else if (r < 0.75) return 2;
+      else return 3;
+    }
+    // Default: balanced
+    if (r < 0.25) return 0;
+    else if (r < 0.50) return 1;
+    else if (r < 0.75) return 2;
+    else return 3;
+  }
+
+  // Avoid placing same consecutive obstacle type
+  let lastType = -1;
+
+  for (let bar = 0; bar < SONG_BARS; bar++) {
+    // Skip silent bars (no melody or drums audible)
+    if (barIsSilent(bar)) continue;
+
+    const section = getSection(bar);
+    const config = sectionConfig(section);
+    let starChance = config.starChance;
+
+    // Boost stars before last chorus (ラスサビ前)
+    if (isBeforeLastChorus(bar)) starChance = 0.45;
+
+    // Select step pattern based on section density
+    let steps;
+    const isChaos = selectedSong === 3; // Chaos Protocol — 16th-note expert
+    if (isChaos) {
+      // Chaos Protocol: ramp quickly into 16th-note density
+      if (bar < 4)       steps = normalSteps;
+      else if (bar < 10) steps = hardSteps;
+      else if (bar < 18) steps = expertSteps;
+      else if (bar < 28) steps = expert16thA;
+      else if (bar < 40) steps = expert16thB;
+      else               steps = expert16thC;
+    } else {
+      // Section-based density selection
+      switch (config.density) {
+        case 'easy':   steps = easySteps; break;
+        case 'normal': steps = normalSteps; break;
+        case 'hard':   steps = hardSteps; break;
+        case 'expert': steps = expertSteps; break;
+        default:       steps = normalSteps; break;
+      }
+    }
+
+    // Add musical variation: occasional rest on every 8th bar for breathing room
+    if (bar > 4 && bar % 8 === 0 && bar < SONG_BARS - 4 && !isChaos) {
+      steps = easySteps;
+      starChance = 0.40; // rest bars get more stars
+    }
+
+    // Build combined step list: 70% melody steps, 30% drum steps
+    // For each step, determine if it's a melody step or drum step
+    for (const step of steps) {
+      const time = (bar * 16 + step) * st;
+
+      // Skip obstacles during countdown intro and too close to song end
+      if (time < CHART_START_OFFSET) continue;
+      if (time >= SONG_DURATION - bt * 2) continue;
+
+      // Check if this step has audible content (melody or drums)
+      const isSynth = sd.synthSteps.has(step);
+      const isDrum = sd.kick.has(step) || sd.snare.has(step) || sd.ohihat.has(step);
+
+      // Skip steps that have no audible content at all
+      if (!isSynth && !isDrum) continue;
+
+      // 70% melody, 30% drum weighting: if it's a melody-only step, 70% chance to place
+      // If drum-only, 30% chance. If both, always place.
+      if (isSynth && !isDrum) {
+        if (rand() > 0.70) continue; // skip 30% of melody-only steps
+      } else if (isDrum && !isSynth) {
+        if (rand() > 0.30) continue; // skip 70% of drum-only steps
+      }
+      // Both melody+drum: always place
+
+      let typeIdx = pickType(step, rand(), config.isCalm, starChance);
+
+      // Avoid 3+ consecutive same types
+      if (typeIdx === lastType) {
+        typeIdx = (typeIdx + 1 + Math.floor(rand() * 4)) % 6;
+      }
+      lastType = typeIdx;
+
+      obstacles.push({
+        time,
+        type: OBS_TYPES[typeIdx],
+        judged: false,
+        judgment: null,
+        hitTime: 0
+      });
+    }
+  }
+
+  obstacles.sort((a, b) => a.time - b.time);
+
+  // Enforce minimum spacing between obstacles
+  // Scroll speed only affects visual spacing, NOT obstacle count
+  const builtInMinGap = st * 1.5;
+  for (let i = obstacles.length - 1; i > 0; i--) {
+    if (obstacles[i].time - obstacles[i - 1].time < builtInMinGap) {
+      obstacles.splice(i, 1);
+    }
+  }
+
+  return obstacles;
+}
+let gameState = 'SONG_SELECT';
+let songSelectIndex = 0;
+let obstacles = [];
+let score = 0, combo = 0, maxCombo = 0;
+let comboPopTimer = 0; // animation timer for combo pop effect
+let judgeCounts = { PERFECT: 0, GREAT: 0, NICE: 0, BAD: 0, MISS: 0 };
+let accuracy = 100;
+let lastJudge = null, judgeTimer = 0;
+let beatFlash = 0;
+let dt = 0, lastTime = 0;
+let particles = [];
+let roadScroll = 0;
+let charPhase = 0;
+
+// READY/GO animation state
+let readyGoTimer = 0;    // countdown timer for READY->GO
+const READY_GO_DUR = 2.5; // total duration: READY 1.5s, GO 1.0s
+
+// Goal line state
+let goalLineZ = -1;  // z position of the goal line (-1 = not visible)
+let goalReached = false; // true when goal line reaches judgment line
+let celebrationTimer = 0; // countdown for celebration animation before result
+
+// Character action state
+let charAction = 'RUN';   // RUN, DODGE_L, DODGE_R, DUCK, JUMP, CHEER
+let charActionTimer = 0;
+let charJumpY = 0;        // vertical offset for jump
+
+// Key flash state per direction
+let keyFlash = { ArrowLeft: 0, ArrowRight: 0, ArrowDown: 0, ArrowUp: 0 };
+
+// Rhythm ball flash state (for hit feedback)
+let rhythmBallFlashes = [];  // { time, judgment, timer }
+const RHYTHM_BALL_RADIUS = 15;
+const RHYTHM_BALL_TRAVEL = 0.60; // time window (seconds) for ball visibility and travel to center — faster flow
+
+// ============================================================
+// PERSPECTIVE MATH
+// ============================================================
+function zToScreen(wz) {
+  const t = Math.pow(Math.max(0, wz), PERSP_POW);
+  return {
+    y: VY + (ROAD_BOTTOM - VY) * t,
+    hw: ROAD_HW * t,
+    t
+  };
+}
+
+// ============================================================
+// PARTICLES
+// ============================================================
+function spawnPart(x, y, color, count) {
+  for (let i = 0; i < count && particles.length < 200; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 80 + Math.random() * 200;
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp - 100,
+      life: 0.4 + Math.random() * 0.4,
+      maxLife: 0.8,
+      color,
+      size: 2 + Math.random() * 4
+    });
+  }
+}
+
+function updatePart(deltaT) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * deltaT;
+    p.y += p.vy * deltaT;
+    p.vy += 400 * deltaT;
+    p.life -= deltaT;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function drawPart() {
+  for (const p of particles) {
+    const a = Math.max(0, p.life / p.maxLife);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 6;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// INPUT
+// ============================================================
+const keys = {};
+const justPressed = {};
+
+window.addEventListener('keydown', (e) => {
+  if (!keys[e.code]) justPressed[e.code] = true;
+  keys[e.code] = true;
+
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
+    e.preventDefault();
+  }
+
+  // Volume control — available on settings screen
+  if (gameState === 'SETTINGS') {
+    if (e.code === 'Minus' || e.code === 'NumpadSubtract') {
+      gameVolume = Math.max(0, gameVolume - 0.05);
+      applyVolume();
+    } else if (e.code === 'Equal' || e.code === 'NumpadAdd') {
+      gameVolume = Math.min(1, gameVolume + 0.05);
+      applyVolume();
+    }
+    if (e.code === 'ArrowUp') {
+      settingsSelection = (settingsSelection + 4) % 5; // 0,1,2,3,4
+    } else if (e.code === 'ArrowDown') {
+      settingsSelection = (settingsSelection + 1) % 5;
+    } else if (e.code === 'ArrowLeft' && settingsSelection === 0) {
+      gameVolume = Math.max(0, gameVolume - 0.05);
+      applyVolume();
+    } else if (e.code === 'ArrowRight' && settingsSelection === 0) {
+      gameVolume = Math.min(1, gameVolume + 0.05);
+      applyVolume();
+    } else if (e.code === 'ArrowLeft' && settingsSelection === 1) {
+      scrollSpeedMult = Math.max(SCROLL_SPEED_MIN, +(scrollSpeedMult - 0.1).toFixed(1));
+    } else if (e.code === 'ArrowRight' && settingsSelection === 1) {
+      scrollSpeedMult = Math.min(SCROLL_SPEED_MAX, +(scrollSpeedMult + 0.1).toFixed(1));
+    } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 3) {
+      // Reset avatar
+      avatarCustom = null;
+      skinTexture = null;
+      skinHasHat = false;
+      avatarLoadingMsg = 'スキンを初期化しました！';
+      setTimeout(() => { avatarLoadingMsg = ''; }, 2000);
+    } else if ((e.code === 'Space' || e.code === 'Enter') && settingsSelection === 4) {
+      // Back to song select
+      gameState = 'SONG_SELECT';
+    } else if (e.code === 'Escape') {
+      gameState = 'SONG_SELECT';
+    }
+  } else if (gameState === 'SONG_SELECT') {
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowUp') {
+      songSelectIndex = (songSelectIndex + SONGS.length - 1) % SONGS.length;
+    } else if (e.code === 'ArrowRight' || e.code === 'ArrowDown') {
+      songSelectIndex = (songSelectIndex + 1) % SONGS.length;
+    } else if (e.code === 'Space' || e.code === 'Enter') {
+      selectSong(songSelectIndex);
+    } else if (e.code === 'KeyS') {
+      // Open settings
+      gameState = 'SETTINGS';
+      settingsSelection = 0;
+    }
+    // Toggle difficulty for custom songs
+    if (e.code === 'KeyD' && songSelectIndex >= 4) {
+      customDifficulty = customDifficulty === 'NORMAL' ? 'HARD' : customDifficulty === 'HARD' ? 'EXPERT' : 'NORMAL';
+    }
+    // BPM adjustment for custom songs
+    if (e.code === 'KeyB' && songSelectIndex >= 4 && customAudioBuffer) {
+      const currentBPM = SONGS[songSelectIndex].bpm;
+      const input = prompt('BPMを入力してください（自動検出: ' + (customDetectedBPM || currentBPM) + '）', String(currentBPM));
+      if (input !== null) {
+        const newBPM = parseInt(input, 10);
+        if (!isNaN(newBPM) && newBPM >= 30 && newBPM <= 300) {
+          updateCustomBPM(newBPM);
+        }
+      }
+    }
+  } else if (gameState === 'START' && e.code === 'Space') {
+    startGame();
+  } else if (gameState === 'RESULT' && (e.code === 'KeyR' || e.code === 'Space')) {
+    resetToStart();
+  } else if (gameState === 'PLAYING') {
+    if (justPressed[e.code] && ['ArrowLeft','ArrowRight','ArrowDown','ArrowUp'].includes(e.code)) {
+      judgeKeyPress(e.code);
+      keyFlash[e.code] = 1.0;
+    }
+  }
+});
+
+window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+// Drag and drop for MP3 files and avatar images
+canvas.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  if (gameState === 'SONG_SELECT') mp3DropZoneHover = true;
+  if (gameState === 'SETTINGS') avatarDropHover = true;
+});
+canvas.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  mp3DropZoneHover = false;
+  avatarDropHover = false;
+});
+canvas.addEventListener('drop', (e) => {
+  e.preventDefault();
+  mp3DropZoneHover = false;
+  avatarDropHover = false;
+  if (e.dataTransfer.files.length > 0) {
+    const file = e.dataTransfer.files[0];
+    if (gameState === 'SONG_SELECT' && file.type.startsWith('audio/')) {
+      handleMP3Drop(file);
+    } else if (gameState === 'SETTINGS' && file.type.startsWith('image/')) {
+      handleAvatarDrop(file);
+    }
+  }
+});
+
+// ============================================================
+// TIMING / JUDGMENT
+// ============================================================
+function musicTime() {
+  if (!audioCtx || gameStartTime < 0) return 0;
+  return audioCtx.currentTime - gameStartTime;
+}
+
+function judgeKeyPress(keyCode) {
+  const now = musicTime();
+  let best = null, bestDiff = Infinity;
+
+  for (const o of obstacles) {
+    if (o.judged) continue;
+    // Only match obstacles whose correct key matches the pressed key
+    if (OBS_KEYS[o.type] !== keyCode) continue;
+    const diff = Math.abs(o.time - now);
+    if (diff < bestDiff && diff < T_MISS) {
+      bestDiff = diff;
+      best = o;
+    }
+  }
+
+  if (!best) {
+    // No obstacle to judge — still perform the character action
+    if (keyCode === 'ArrowLeft')  { charAction = 'DODGE_L'; charActionTimer = ACTION_DUR; }
+    if (keyCode === 'ArrowRight') { charAction = 'DODGE_R'; charActionTimer = ACTION_DUR; }
+    if (keyCode === 'ArrowDown')  { charAction = 'DUCK';    charActionTimer = ACTION_DUR; }
+    if (keyCode === 'ArrowUp')    { charAction = 'JUMP';    charActionTimer = ACTION_DUR; charJumpY = 0; }
+    return;
+  }
+
+  best.judged = true;
+  best.hitTime = now;
+
+  let j;
+  if (bestDiff <= T_PERFECT)    j = 'PERFECT';
+  else if (bestDiff <= T_GREAT) j = 'GREAT';
+  else if (bestDiff <= T_NICE)  j = 'NICE';
+  else                          j = 'BAD';
+
+  best.judgment = j;
+  judgeCounts[j]++;
+
+  if (j === 'BAD') {
+    combo = 0;
+  } else {
+    combo++;
+    comboPopTimer = 0.15; // trigger pop animation
+    if (combo > maxCombo) maxCombo = combo;
+  }
+
+  // Score: accumulate raw judge points. Display score = rawScore / (N * 100) * 1000000
+  // All Perfect = exactly 1,000,000 points
+  score += JUDGE_SCORE[j];
+
+  lastJudge = j;
+  judgeTimer = 0.5;
+
+  // Set character action
+  if (keyCode === 'ArrowLeft')  { charAction = 'DODGE_L'; charActionTimer = ACTION_DUR; }
+  if (keyCode === 'ArrowRight') { charAction = 'DODGE_R'; charActionTimer = ACTION_DUR; }
+  if (keyCode === 'ArrowDown')  { charAction = 'DUCK';    charActionTimer = ACTION_DUR; }
+  if (keyCode === 'ArrowUp')    { charAction = 'JUMP';    charActionTimer = ACTION_DUR; charJumpY = 0; }
+
+  // FX
+  spawnPart(VX, ROAD_BOTTOM, JUDGE_COLORS[j], j === 'PERFECT' ? 20 : j === 'GREAT' ? 14 : 8);
+  addRhythmBallFlash(j);
+
+  updateAccuracy();
+}
+
+function processAutoMisses() {
+  const now = musicTime();
+  for (const o of obstacles) {
+    if (o.judged) continue;
+    if (now > o.time + T_MISS) {
+      o.judged = true;
+      o.judgment = 'MISS';
+      judgeCounts.MISS++;
+      combo = 0;
+      lastJudge = 'MISS';
+      judgeTimer = 0.35;
+      if (audioCtx) sfxMiss(audioCtx.currentTime);
+      addRhythmBallFlash('MISS');
+      updateAccuracy();
+    }
+  }
+}
+
+function updateAccuracy() {
+  const tot = judgeCounts.PERFECT + judgeCounts.GREAT + judgeCounts.NICE + judgeCounts.BAD + judgeCounts.MISS;
+  if (tot === 0) { accuracy = 100; return; }
+  const s = judgeCounts.PERFECT * 100 + judgeCounts.GREAT * 80 + judgeCounts.NICE * 50 + judgeCounts.BAD * 20;
+  accuracy = s / (tot * 100) * 100;
+}
+
+// Display score: raw score mapped to 0-1,000,000 scale (All Perfect = 1,000,000)
+function getDisplayScore() {
+  const total = obstacles.length;
+  if (total === 0) return 0;
+  return Math.round(score * 1000000 / (total * 100));
+}
+
+// Full combo check: all judgments NICE or better (no BAD, no MISS)
+function isFullCombo() {
+  return obstacles.length > 0 && judgeCounts.MISS === 0 && judgeCounts.BAD === 0;
+}
+
+// All Perfect check
+function isAllPerfect() {
+  return obstacles.length > 0 && judgeCounts.PERFECT === obstacles.length;
+}
+
+// ============================================================
+// UPDATE
+// ============================================================
+function update(deltaT) {
+  if (gameState === 'READY_GO') {
+    readyGoTimer -= deltaT;
+    // Don't scroll road or play music during READY_GO — just animate character idle
+    charPhase += deltaT * 12;
+    if (readyGoTimer <= 0) {
+      gameState = 'PLAYING';
+      // Start music and game timing NOW when GO finishes
+      if (audioCtx) {
+        gameStartTime = audioCtx.currentTime;
+        nextStepTime = gameStartTime;
+        stepCount = 0; beatCount = 0; melodyPos = 0;
+      }
+      if (isCustomSong) {
+        startCustomAudio();
+      }
+    }
+    return;
+  }
+
+  if (gameState !== 'PLAYING') return;
+
+  scheduleAudio();
+  processAutoMisses();
+
+  beatFlash = Math.max(0, beatFlash - deltaT * 4);
+  judgeTimer = Math.max(0, judgeTimer - deltaT);
+  comboPopTimer = Math.max(0, comboPopTimer - deltaT);
+  for (const k in keyFlash) keyFlash[k] = Math.max(0, keyFlash[k] - deltaT * 5);
+
+  // Character action timer (skip during CHEER — cheer continues until result)
+  if (charAction !== 'CHEER' && charActionTimer > 0) {
+    charActionTimer -= deltaT;
+    if (charAction === 'JUMP') {
+      const t = 1 - (charActionTimer / ACTION_DUR);
+      charJumpY = Math.sin(t * Math.PI) * 90;
+    }
+    if (charActionTimer <= 0) {
+      charAction = 'RUN';
+      charActionTimer = 0;
+      charJumpY = 0;
+    }
+  }
+
+  updatePart(deltaT);
+
+  // Stop road scrolling when goal is reached
+  if (!goalReached) {
+    roadScroll = (roadScroll + deltaT * 3.0) % 1.0;
+  }
+  charPhase += deltaT * 12;
+
+  const now = musicTime();
+
+  // Goal line: start showing when near the end of the song
+  const lastObsTime = obstacles.length > 0 ? obstacles[obstacles.length - 1].time : SONG_DURATION;
+  // For custom songs, goal is based on song duration (wait for song to finish)
+  const goalTime = isCustomSong ? Math.max(lastObsTime, SONG_DURATION - 2.0) : lastObsTime;
+  const goalAppearTime = goalTime - effectiveScrollTime() * 0.5;
+  if (now >= goalAppearTime) {
+    // goalLineZ goes from 0 (horizon) to 1 (judgment line)
+    goalLineZ = Math.min(1.3, (now - goalAppearTime) / effectiveScrollTime());
+    // Stop scrolling when goal line reaches the judgment line
+    if (goalLineZ >= 1.0 && !goalReached) {
+      goalReached = true;
+      goalLineZ = 1.0; // freeze at judgment line
+      // Start celebration if full combo
+      if (isFullCombo()) {
+        charAction = 'CHEER';
+        charActionTimer = 0;
+        charJumpY = 0;
+        celebrationTimer = 2.0; // 2 seconds of celebration
+      }
+    }
+    if (goalReached) {
+      goalLineZ = 1.0; // keep goal at judgment line
+    }
+  } else {
+    goalLineZ = -1;
+  }
+
+  // Celebration countdown
+  if (celebrationTimer > 0) {
+    celebrationTimer -= deltaT;
+  }
+
+  const allDone = obstacles.length > 0 && obstacles.every(o => o.judged);
+  // For custom songs, wait until the actual song file finishes playing
+  const endTime = isCustomSong ? Math.max(lastObsTime + 1.5, SONG_DURATION) : lastObsTime + 1.5;
+  // Wait for celebration to finish before showing result
+  const canShowResult = celebrationTimer <= 0;
+  if (allDone && now >= endTime && canShowResult) {
+    stopCustomAudio();
+    gameState = 'RESULT';
+  }
+}
+
+// ============================================================
+// RENDERING: Background
+// ============================================================
+function pseudoRand(n) {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function drawBg() {
+  const g = ctx.createLinearGradient(0, 0, 0, VY + 40);
+  g.addColorStop(0, '#05000d');
+  g.addColorStop(0.6, '#0a0020');
+  g.addColorStop(1, '#001020');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  ctx.save();
+  for (let i = 0; i < 100; i++) {
+    const sx = pseudoRand(i * 3 + 42) * W;
+    const sy = pseudoRand(i * 3 + 43) * (VY - 10);
+    const sr = pseudoRand(i * 3 + 44) * 1.2 + 0.3;
+    ctx.globalAlpha = 0.3 + pseudoRand(i + 99) * 0.5;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Ground
+  const gg = ctx.createLinearGradient(0, VY, 0, H);
+  gg.addColorStop(0, '#030308');
+  gg.addColorStop(1, '#020206');
+  ctx.fillStyle = gg;
+  ctx.fillRect(0, VY, W, H - VY);
+
+  // Horizon glow (subtle, no blue lines)
+  const hg = ctx.createRadialGradient(VX, VY, 0, VX, VY, 200);
+  hg.addColorStop(0, 'rgba(60,120,200,0.15)');
+  hg.addColorStop(0.5, 'rgba(30,60,120,0.06)');
+  hg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = hg;
+  ctx.fillRect(0, VY - 40, W, 120);
+}
+
+// ============================================================
+// RENDERING: Track (curved road, sphere-surface style like R2BEAT)
+// ============================================================
+
+// Curved road edge X at a given z (0=horizon, 1=near).
+// Uses a power curve so edges bulge outward, giving a "running on a sphere" look.
+const ROAD_CURVE_POW = 0.55; // <1 = convex outward bulge
+function roadEdgeX(z, side) {
+  // side: -1 for left, +1 for right
+  const s = zToScreen(z);
+  // Apply convex curve: edges spread out faster than linear
+  const curve = Math.pow(Math.max(0, z), ROAD_CURVE_POW);
+  const hw = ROAD_HW * curve;
+  return VX + side * hw;
+}
+
+function drawTrack() {
+  // Road surface — filled with curved edges
+  const CURVE_STEPS = 40;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(VX, VY);
+  // Right edge from horizon to bottom
+  for (let i = 1; i <= CURVE_STEPS; i++) {
+    const z = i / CURVE_STEPS;
+    const s = zToScreen(z);
+    ctx.lineTo(roadEdgeX(z, 1), s.y);
+  }
+  // Bottom right to bottom-left (below road)
+  const sBottom = zToScreen(1.0);
+  ctx.lineTo(roadEdgeX(1.0, 1), H);
+  ctx.lineTo(roadEdgeX(1.0, -1), H);
+  // Left edge from bottom back to horizon
+  for (let i = CURVE_STEPS; i >= 0; i--) {
+    const z = i / CURVE_STEPS;
+    const s = zToScreen(z);
+    ctx.lineTo(roadEdgeX(z, -1), s.y);
+  }
+  ctx.closePath();
+  const rg = ctx.createLinearGradient(VX, VY, VX, H);
+  rg.addColorStop(0, '#0a0a14');
+  rg.addColorStop(1, '#0e0e1c');
+  ctx.fillStyle = rg;
+  ctx.fill();
+  ctx.restore();
+
+  // Scrolling horizontal road lines (curved arcs)
+  const NUM_LINES = 22;
+  ctx.save();
+  for (let i = 0; i < NUM_LINES; i++) {
+    const z = (i + roadScroll) / NUM_LINES;
+    const s = zToScreen(z);
+    if (s.t < 0.005) continue;
+    const alpha = Math.min(1, s.t * 1.5) * 0.2;
+    ctx.strokeStyle = `rgba(50,80,140,${alpha})`;
+    ctx.lineWidth = 1;
+    const lx = roadEdgeX(z, -1);
+    const rx = roadEdgeX(z, 1);
+    // Draw curved horizontal line (arc bowing downward for sphere feel)
+    const arcSag = 8 * Math.pow(z, ROAD_CURVE_POW); // how much the arc bows down
+    ctx.beginPath();
+    ctx.moveTo(lx, s.y);
+    ctx.quadraticCurveTo(VX, s.y + arcSag, rx, s.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Lane divider lines (6 lanes visible, curved paths)
+  ctx.save();
+  const NUM_VISIBLE_LANES = 6;
+  const LANE_STEPS = 30;
+  for (let i = 1; i < NUM_VISIBLE_LANES; i++) {
+    const laneT = i / NUM_VISIBLE_LANES; // 0..1 across road width
+    ctx.strokeStyle = 'rgba(60,100,180,0.3)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 10]);
+    ctx.beginPath();
+    for (let j = 0; j <= LANE_STEPS; j++) {
+      const z = j / LANE_STEPS;
+      const s = zToScreen(z);
+      const lx = roadEdgeX(z, -1);
+      const rx = roadEdgeX(z, 1);
+      const x = lx + (rx - lx) * laneT;
+      if (j === 0) ctx.moveTo(x, s.y);
+      else ctx.lineTo(x, s.y);
+    }
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  // Road edges (neon, curved — fade out near horizon to create clean horizon line)
+  ctx.save();
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    const FADE_START = 0.15; // start drawing edges from this z (avoid tip)
+    let started = false;
+    for (let i = 0; i <= CURVE_STEPS; i++) {
+      const z = i / CURVE_STEPS;
+      if (z < FADE_START) continue;
+      const s = zToScreen(z);
+      const x = roadEdgeX(z, side);
+      if (!started) { ctx.moveTo(x, s.y); started = true; }
+      else ctx.lineTo(x, s.y);
+    }
+    // Fade alpha along the edge
+    const fadeAlpha = 0.8;
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = '#0088ff';
+    ctx.strokeStyle = `rgba(0,136,255,${fadeAlpha})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Side barriers with lights
+  drawSideBarriers();
+
+  // Center lane highlight (subtle glow on the center "active" lane)
+  drawCenterLaneGlow();
+}
+
+function drawSideBarriers() {
+  const NUM_POSTS = 3;
+  ctx.save();
+  for (let side = -1; side <= 1; side += 2) {
+    for (let i = 0; i < NUM_POSTS; i++) {
+      const z = (i + roadScroll) / NUM_POSTS;
+      const s = zToScreen(z);
+      if (s.t < 0.01) continue;
+      const x = roadEdgeX(z, side) + side * 8 * s.t;
+      const h = 25 * s.t;
+      const alpha = Math.min(1, s.t * 2) * 0.6;
+
+      ctx.fillStyle = `rgba(40,60,120,${alpha})`;
+      ctx.fillRect(x - 2 * s.t, s.y - h, 4 * s.t, h);
+
+      // Yellow light on top (like R2BEAT road lights)
+      ctx.fillStyle = `rgba(255,200,50,${alpha * 0.9})`;
+      ctx.shadowColor = '#ffcc33';
+      ctx.shadowBlur = 10 * s.t;
+      ctx.beginPath();
+      ctx.arc(x, s.y - h, 3.5 * s.t, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  }
+  ctx.restore();
+}
+
+function drawCenterLaneGlow() {
+  // Subtle glow on the center portion of the road
+  ctx.save();
+  const gw = 60; // glow width at bottom
+  const grad = ctx.createLinearGradient(VX - gw, 0, VX + gw, 0);
+  grad.addColorStop(0, 'rgba(0,150,255,0)');
+  grad.addColorStop(0.3, 'rgba(0,150,255,0.04)');
+  grad.addColorStop(0.5, 'rgba(0,150,255,0.07)');
+  grad.addColorStop(0.7, 'rgba(0,150,255,0.04)');
+  grad.addColorStop(1, 'rgba(0,150,255,0)');
+  ctx.fillStyle = grad;
+  // Draw from vanishing point to bottom
+  ctx.beginPath();
+  ctx.moveTo(VX - 3, VY);
+  ctx.lineTo(VX - gw, ROAD_BOTTOM);
+  ctx.lineTo(VX + gw, ROAD_BOTTOM);
+  ctx.lineTo(VX + 3, VY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: Judgment Zone marker
+// ============================================================
+function drawJudgeZone() {
+  const s = zToScreen(1.0);
+  const y = s.y;
+
+  ctx.save();
+  const pulse = 0.7 + 0.3 * Math.sin(performance.now() / 1000 * 4);
+
+  // Horizontal glow line across the road
+  ctx.shadowColor = '#00ccff';
+  ctx.shadowBlur = 18 * pulse;
+  ctx.strokeStyle = `rgba(0,200,255,${0.5 * pulse})`;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(VX - s.hw, y);
+  ctx.lineTo(VX + s.hw, y);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: Rhythm Balls (timing indicators)
+// ============================================================
+function drawRhythmBalls() {
+  const now = musicTime();
+  const r = RHYTHM_BALL_RADIUS;
+
+  // Target position: slightly below screen center (y=424, screen center=384)
+  const targetX = VX;
+  const targetY = H / 2 + 40;
+
+  // Start from screen edges, same Y as target (straight horizontal line)
+  const leftStartX = -r;        // left edge of screen
+  const rightStartX = W + r;    // right edge of screen
+
+  ctx.save();
+
+  // Draw approaching balls for upcoming obstacles
+  for (const o of obstacles) {
+    if (o.judged) continue;
+    const timeDiff = o.time - now;
+    if (timeDiff < 0 || timeDiff > RHYTHM_BALL_TRAVEL) continue;
+
+    // Progress: 0 = at edge, 1 = at target — constant speed (linear)
+    const progress = 1 - (timeDiff / RHYTHM_BALL_TRAVEL);
+
+    // Straight line, constant speed — no easing
+    const leftX = leftStartX + (targetX - leftStartX) * progress;
+    const rightX = rightStartX + (targetX - rightStartX) * progress;
+    const ballY = targetY;  // same Y throughout (straight horizontal)
+
+    // Alpha: fade in quickly, full near target
+    const alpha = Math.min(1, progress * 2.5);
+
+    // Color transitions: orange → white — balls turn white exactly when they touch at center (PERFECT)
+    // PERFECT zone = T_PERFECT / RHYTHM_BALL_TRAVEL of total travel, start blending well before
+    const perfectThreshold = 1.0 - T_PERFECT / RHYTHM_BALL_TRAVEL; // ~0.908
+    const blendStart = perfectThreshold - 0.15; // start blending ~0.15 before PERFECT zone
+    const perfectZone = Math.max(0, Math.min(1, (progress - blendStart) / (1.0 - blendStart)));
+    const rr = Math.round(255);
+    const gg = Math.round(136 + (255 - 136) * perfectZone);
+    const bb = Math.round(51 + (255 - 51) * perfectZone);
+    const ballCol = `rgb(${rr},${gg},${bb})`;
+
+    ctx.globalAlpha = alpha * 0.9;
+    ctx.fillStyle = ballCol;
+    ctx.shadowColor = ballCol;
+    ctx.shadowBlur = 6 + perfectZone * 10;
+
+    // Left ball
+    ctx.beginPath();
+    ctx.arc(leftX, ballY, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Right ball
+    ctx.beginPath();
+    ctx.arc(rightX, ballY, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Small trail effect
+    if (progress > 0.1) {
+      ctx.globalAlpha = alpha * 0.2;
+      ctx.shadowBlur = 0;
+      const trailOff = (1 - progress) * 30;
+      ctx.beginPath();
+      ctx.arc(leftX - trailOff, ballY, r * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(rightX + trailOff, ballY, r * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Draw hit feedback flashes
+  for (let i = rhythmBallFlashes.length - 1; i >= 0; i--) {
+    const f = rhythmBallFlashes[i];
+    f.timer -= dt;
+    if (f.timer <= 0) {
+      rhythmBallFlashes.splice(i, 1);
+      continue;
+    }
+
+    const t = f.timer / 0.35; // normalize 0→1
+    const flashR = r + (1 - t) * 12; // expand on hit
+
+    // Color based on judgment
+    let col, glowCol;
+    if (f.judgment === 'PERFECT') {
+      col = '#ffffff';
+      glowCol = '#ffffff';
+    } else if (f.judgment === 'GREAT') {
+      col = '#ffdd88';
+      glowCol = '#ffcc44';
+    } else if (f.judgment === 'NICE') {
+      col = '#ff9933';
+      glowCol = '#ff8822';
+    } else if (f.judgment === 'BAD') {
+      col = '#dd4422';
+      glowCol = '#cc2200';
+    } else {
+      col = '#ff2244';
+      glowCol = '#ff0022';
+    }
+
+    ctx.globalAlpha = t * 0.9;
+    ctx.fillStyle = col;
+    ctx.shadowColor = glowCol;
+    ctx.shadowBlur = 20 * t;
+
+    // Flash above character (where balls converge)
+    ctx.beginPath();
+    ctx.arc(targetX, targetY, flashR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// Add rhythm ball flash on judgment
+function addRhythmBallFlash(judgment) {
+  rhythmBallFlashes.push({ judgment, timer: 0.35 });
+}
+
+// ============================================================
+// RENDERING: Obstacles
+// ============================================================
+function drawObstacles() {
+  const now = musicTime();
+
+  // Collect visible obstacles
+  const visible = [];
+  for (const o of obstacles) {
+    const z = 1.0 - (o.time - now) / effectiveScrollTime();
+    if (z < OBS_VIS_CUTOFF - 0.05 || z > 1.3) continue;
+    if (o.judged && o.judgment !== 'MISS') continue;
+    visible.push({ obs: o, z });
+  }
+  visible.sort((a, b) => a.z - b.z);
+
+  for (const { obs: o, z } of visible) {
+    if (z < OBS_VIS_CUTOFF) continue;
+
+    // Use road perspective mapping so obstacles move WITH the road surface
+    const s = zToScreen(z);
+    const y = s.y;
+    // Linear scale: gentle size progression from far to near
+    const zClamped = Math.max(0, Math.min(1.0, z)); // clamp z for scale calculation
+    const scale = OBS_SCALE_MIN + zClamped * (OBS_SCALE_MAX - OBS_SCALE_MIN);
+
+    // Alpha: far obstacles start at OBS_FAR_ALPHA, gradually increase to 1.0
+    // This lets players see obstacles from much further away
+    let alpha;
+    if (z <= OBS_VIS_CUTOFF) {
+      alpha = 0;
+    } else if (z <= OBS_FULL_ALPHA_Z) {
+      // Fade in from OBS_FAR_ALPHA at cutoff to 1.0 at OBS_FULL_ALPHA_Z
+      // Quadratic easing keeps obstacles thin longer, matching gameplay feel
+      const fadeProgress = (z - OBS_VIS_CUTOFF) / (OBS_FULL_ALPHA_Z - OBS_VIS_CUTOFF);
+      alpha = OBS_FAR_ALPHA + (1.0 - OBS_FAR_ALPHA) * fadeProgress * fadeProgress;
+    } else {
+      alpha = 1.0;
+    }
+    if (o.judged && o.judgment === 'MISS') {
+      const fadeZ = z - 1.0;
+      alpha = Math.max(0, 1 - fadeZ * 4) * 0.35;
+    }
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    const col = o.judged && o.judgment === 'MISS' ? '#555' : OBS_COLORS[o.type];
+    // X offset for side obstacles follows curved road edges
+    const curvedHW = ROAD_HW * Math.pow(Math.max(0, z), ROAD_CURVE_POW);
+    const sideOff = curvedHW * 0.12;
+
+    if (o.type === 'PYLON_R') {
+      drawPylon(VX + sideOff, y, scale, col, false);
+    } else if (o.type === 'PYLON_L') {
+      drawPylon(VX - sideOff, y, scale, col, true);
+    } else if (o.type === 'ARCH') {
+      drawArch(VX, y, scale, col);
+    } else if (o.type === 'BLOCK') {
+      drawBlock(VX, y, scale, col);
+    } else if (o.type === 'STAR_R') {
+      drawStar(VX + sideOff, y, scale, col, false);
+    } else if (o.type === 'STAR_L') {
+      drawStar(VX - sideOff, y, scale, col, true);
+    }
+
+    // Near-judgment-line boost glow
+    if (!o.judged && z > 0.8) {
+      const boost = (z - 0.8) * 5;
+      ctx.shadowColor = col;
+      ctx.shadowBlur = 20 * boost;
+      ctx.fillStyle = col;
+      ctx.globalAlpha = boost * 0.15;
+      ctx.beginPath();
+      ctx.arc(VX, y, 35 * scale, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+}
+
+function drawPylon(x, y, scale, color, isLeft) {
+  // Traffic cone / pylon shape
+  const w = 28 * scale;
+  const h = 70 * scale;
+
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 8 * scale;
+
+  // Cone body (trapezoid)
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x - w, y);
+  ctx.lineTo(x + w, y);
+  ctx.lineTo(x + w * 0.4, y - h);
+  ctx.lineTo(x - w * 0.4, y - h);
+  ctx.closePath();
+  ctx.fill();
+
+  // White stripes
+  ctx.fillStyle = '#fff';
+  ctx.globalAlpha = 0.7;
+  const stripeH = h * 0.15;
+  ctx.fillRect(x - w * 0.85, y - h * 0.35, w * 1.7, stripeH);
+  ctx.fillRect(x - w * 0.65, y - h * 0.65, w * 1.3, stripeH);
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+function drawArch(x, y, scale, color) {
+  // Arch / gate shape — tall narrow ∩ shape: very tall posts with narrow rounded top
+  const w = 90 * scale;      // wider arch (half-width of opening)
+  const h = 190 * scale;     // much taller total height
+  const postW = 14 * scale;
+  const postH = h * 0.78;    // very tall vertical posts (78% of height)
+  const archTop = y - postH; // where posts end and curve begins
+
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10 * scale;
+
+  // Left post
+  ctx.fillStyle = color;
+  ctx.fillRect(x - w - postW, y - postH, postW, postH);
+  // Right post
+  ctx.fillRect(x + w, y - postH, postW, postH);
+
+  // Narrow rounded top (∩ shape) — tight curve connecting post tops
+  ctx.beginPath();
+  ctx.moveTo(x - w - postW, archTop);
+  ctx.bezierCurveTo(
+    x - w - postW, y - h,   // left control — pull up to full height
+    x + w + postW, y - h,   // right control — pull up to full height
+    x + w + postW, archTop   // end at right post top
+  );
+  ctx.lineTo(x + w, archTop);
+  ctx.bezierCurveTo(
+    x + w, y - h + postW * 1.2,
+    x - w, y - h + postW * 1.2,
+    x - w, archTop
+  );
+  ctx.closePath();
+  ctx.fill();
+
+  // Glow effect on arch ceiling
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(x - w - postW, archTop);
+  ctx.bezierCurveTo(
+    x - w - postW, y - h,
+    x + w + postW, y - h,
+    x + w + postW, archTop
+  );
+  ctx.lineTo(x + w, archTop);
+  ctx.bezierCurveTo(
+    x + w, y - h + postW * 1.2,
+    x - w, y - h + postW * 1.2,
+    x - w, archTop
+  );
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+function drawBlock(x, y, scale, color) {
+  // Ground block - low obstacle to jump over
+  const w = 45 * scale;
+  const h = 38 * scale;
+
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 8 * scale;
+
+  // Block body
+  ctx.fillStyle = color;
+  ctx.fillRect(x - w, y - h, w * 2, h);
+
+  // Top face (lighter)
+  ctx.fillStyle = '#88ff88';
+  ctx.globalAlpha = 0.4;
+  ctx.fillRect(x - w, y - h, w * 2, h * 0.3);
+  ctx.globalAlpha = 1;
+
+  // Side highlight
+  ctx.strokeStyle = '#fff';
+  ctx.globalAlpha = 0.3;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x - w, y - h, w * 2, h);
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+function drawStar(x, y, scale, color, isLeft) {
+  // Yellow star collectible
+  const r = 34 * scale;
+  const ir = 16 * scale;
+
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12 * scale;
+  ctx.fillStyle = color;
+
+  // Gentle left-right sway instead of full rotation
+  const sway = Math.sin(performance.now() / 600) * 0.18; // ~10° max tilt
+  ctx.translate(x, y - r * 0.5);
+  ctx.rotate(sway);
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const outerAngle = (i * 2 * Math.PI / 5) - Math.PI / 2;
+    const innerAngle = ((i + 0.5) * 2 * Math.PI / 5) - Math.PI / 2;
+    const ox = Math.cos(outerAngle) * r;
+    const oy = Math.sin(outerAngle) * r;
+    const ix = Math.cos(innerAngle) * ir;
+    const iy = Math.sin(innerAngle) * ir;
+    if (i === 0) ctx.moveTo(ox, oy);
+    else ctx.lineTo(ox, oy);
+    ctx.lineTo(ix, iy);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Inner highlight
+  ctx.fillStyle = '#fff';
+  ctx.globalAlpha = 0.4;
+  ctx.beginPath();
+  ctx.arc(0, 0, ir * 0.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+function drawCharacter() {
+  const baseY = ROAD_BOTTOM;  // feet ON the road at judgment line
+  const phase = charPhase;
+  const skin = getActiveSkin();
+
+  // Calculate character position based on action
+  let cx = VX;
+  let cy = baseY;
+  let scaleY = 1.0;
+
+  if (charAction === 'DODGE_L') {
+    const t = 1 - (charActionTimer / ACTION_DUR);
+    const sway = Math.sin(t * Math.PI) * 12;
+    cx = VX - sway;
+  } else if (charAction === 'DODGE_R') {
+    const t = 1 - (charActionTimer / ACTION_DUR);
+    const sway = Math.sin(t * Math.PI) * 12;
+    cx = VX + sway;
+  } else if (charAction === 'DUCK') {
+    scaleY = 0.5;
+  } else if (charAction === 'JUMP') {
+    cy = baseY - charJumpY;
+  } else if (charAction === 'CHEER') {
+    // Celebration: character bounces joyfully
+    const cheerBounce = Math.abs(Math.sin(phase * 0.5)) * 30;
+    cy = baseY - cheerBounce;
+  }
+
+  // Running bounce (only while running), cheer animation
+  const isRunning = charAction === 'RUN';
+  const isCheering = charAction === 'CHEER';
+  const bounce = isRunning ? Math.abs(Math.sin(phase)) * 4 : 0;
+  const legSwing = isRunning ? Math.sin(phase) * 0.4 : (isCheering ? Math.sin(phase * 0.5) * 0.2 : 0);
+  const armSwing = isRunning ? Math.sin(phase + Math.PI) * 0.5 : (isCheering ? -1.2 + Math.sin(phase * 0.8) * 0.4 : 0); // arms raised during cheer
+
+  ctx.save();
+  ctx.translate(cx, cy - bounce);
+
+  // Character scale — Minecraft blocky style
+  // Character total unscaled height ≈ 56px. Arch at foreground ≈ 161px.
+  // sc=2.6 → ~146px: slightly smaller than the arch.
+  const sc = 2.6;
+  ctx.scale(sc, sc * scaleY);
+
+  // Shadow on ground
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath();
+  ctx.ellipse(0, 2 + bounce, 20, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Pixel size for drawing — Minecraft skin parts are small (4-8px),
+  // we scale them up to game size. Character total height ~50px at sc=1.
+  // Head = 8x8 → draw at 20x20, Body = 8x12 → 12x18, Arm = 4x12 → 6x18, Leg = 4x12 → 6x18
+  const pxHead = 2.5;  // pixel multiplier for head (8px * 2.5 = 20)
+  const pxBody = 1.5;  // pixel multiplier for body
+  const pxLimb = 1.5;  // pixel multiplier for arms/legs
+
+  // Positions (origin at feet center, y goes up)
+  const legH = 12 * pxLimb;   // 18
+  const bodyH = 12 * pxBody;  // 18
+  const headH = 8 * pxHead;   // 20
+  const headW = 8 * pxHead;   // 20
+  const bodyW = 8 * pxBody;   // 12
+  const armW = 4 * pxLimb;    // 6
+  const armH = 12 * pxLimb;   // 18
+  const legW = 4 * pxLimb;    // 6
+
+  const feetY = 0;             // bottom
+  const legTopY = -legH;       // -18
+  const bodyTopY = legTopY - bodyH; // -36
+  const headTopY = bodyTopY - headH; // -56
+
+  ctx.imageSmoothingEnabled = false; // crisp pixels!
+
+  // Helper: draw a skin region scaled to target rect
+  // sx,sy,sw,sh = source region in skin texture
+  // dx,dy,dw,dh = destination rect
+  function drawPart(sx, sy, sw, sh, dx, dy, dw, dh) {
+    ctx.drawImage(skin, sx, sy, sw, sh, dx, dy, dw, dh);
+  }
+
+  // --- RIGHT LEG ---
+  ctx.save();
+  ctx.translate(-legW/2, feetY - legH);
+  ctx.rotate(legSwing);
+  // Right leg front: skin(4,20, 4,12)
+  drawPart(4, 20, 4, 12, -legW/2, 0, legW, legH);
+  ctx.restore();
+
+  // --- LEFT LEG ---
+  ctx.save();
+  ctx.translate(legW/2, feetY - legH);
+  ctx.rotate(-legSwing);
+  // Left leg front: skin(20,52, 4,12)
+  drawPart(20, 52, 4, 12, -legW/2, 0, legW, legH);
+  ctx.restore();
+
+  // --- BODY ---
+  // Body front: skin(20,20, 8,12)
+  drawPart(20, 20, 8, 12, -bodyW/2, bodyTopY, bodyW, bodyH);
+
+  // --- RIGHT ARM ---
+  ctx.save();
+  ctx.translate(-bodyW/2 - armW/2, bodyTopY);
+  ctx.rotate(armSwing);
+  // Right arm front: skin(44,20, 4,12)
+  drawPart(44, 20, 4, 12, -armW/2, 0, armW, armH);
+  ctx.restore();
+
+  // --- LEFT ARM ---
+  ctx.save();
+  ctx.translate(bodyW/2 + armW/2, bodyTopY);
+  ctx.rotate(-armSwing);
+  // Left arm front: skin(36,52, 4,12)
+  drawPart(36, 52, 4, 12, -armW/2, 0, armW, armH);
+  ctx.restore();
+
+  // --- HEAD ---
+  // Head front: skin(8,8, 8,8)
+  drawPart(8, 8, 8, 8, -headW/2, headTopY, headW, headH);
+
+  // --- HEAD OVERLAY (hat layer) --- skin(40,8, 8,8)
+  if (skinHasHat) {
+    drawPart(40, 8, 8, 8, -headW/2 - 1, headTopY - 1, headW + 2, headH + 2);
+  }
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: HUD
+// ============================================================
+function drawHUD() {
+  ctx.save();
+
+  // Beat flash overlay
+  if (beatFlash > 0) {
+    ctx.fillStyle = `rgba(30,80,200,${beatFlash * 0.08})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // ---- Combo (top center, larger with pop animation) ----
+  if (combo > 0) {
+    const comboSize = Math.min(85, 60 + combo * 0.25);
+    const popScale = 1 + comboPopTimer / 0.15 * 0.30; // 1.0→1.30 on hit, decays back
+
+    ctx.save();
+    ctx.translate(VX, 56);
+    ctx.scale(popScale, popScale);
+
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${comboSize}px 'Impact', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(combo, 0, 0);
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,180,0.85)';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText('COMBO', 0, comboSize / 2 + 16);
+
+    ctx.restore();
+  }
+
+  // ---- Score (top right) ----
+  ctx.shadowBlur = 8;
+  ctx.shadowColor = '#00ccff';
+  ctx.fillStyle = '#00ddff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillText(String(getDisplayScore()), W - 25, 18);
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = 'rgba(100,200,255,0.7)';
+  ctx.fillText('SCORE', W - 25, 44);
+
+  // ---- Accuracy gauge (top-right circle) ----
+  drawAccuracyGauge(W - 70, 110, 35);
+
+  // ---- Judgment stats (bottom-left) ----
+  ctx.shadowBlur = 0;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillStyle = '#00ddff';
+  ctx.fillText('\u5224\u5B9A ' + accuracy.toFixed(1) + '%', 18, H - 130);
+
+  const stats = [
+    ['PERFECT', judgeCounts.PERFECT, JUDGE_COLORS.PERFECT],
+    ['GREAT',   judgeCounts.GREAT,   JUDGE_COLORS.GREAT],
+    ['NICE',    judgeCounts.NICE,    JUDGE_COLORS.NICE],
+    ['BAD',     judgeCounts.BAD,     JUDGE_COLORS.BAD],
+    ['MISS',    judgeCounts.MISS,    JUDGE_COLORS.MISS],
+  ];
+  ctx.font = '12px sans-serif';
+  stats.forEach(function(entry, idx) {
+    ctx.fillStyle = entry[2];
+    ctx.globalAlpha = 0.85;
+    ctx.fillText(entry[0], 18, H - 108 + idx * 18);
+    ctx.fillText(String(entry[1]), 85, H - 108 + idx * 18);
+  });
+  ctx.globalAlpha = 1;
+
+  // ---- Controls hint (bottom corners) ----
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(100,200,255,0.4)';
+  ctx.font = '11px sans-serif';
+  ctx.fillText('BPM ' + BPM + ' — ' + SONGS[selectedSong].name, 18, H - 16);
+
+  // ---- Progress bar (bottom of screen) ----
+  const now = musicTime();
+  const prog = Math.min(1, now / SONG_DURATION);
+
+  // Background track
+  ctx.fillStyle = 'rgba(30,30,60,0.7)';
+  ctx.fillRect(20, H - 18, W - 40, 10);
+
+  // Fill
+  const progGrad = ctx.createLinearGradient(20, 0, W - 40, 0);
+  progGrad.addColorStop(0, '#0088ff');
+  progGrad.addColorStop(0.5, '#00ccff');
+  progGrad.addColorStop(1, '#44ffcc');
+  ctx.fillStyle = progGrad;
+  ctx.fillRect(20, H - 18, (W - 40) * prog, 10);
+
+  // Border
+  ctx.strokeStyle = 'rgba(100,200,255,0.4)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(20, H - 18, W - 40, 10);
+
+  // Progress marker dot
+  const markerX = 20 + (W - 40) * prog;
+  ctx.fillStyle = '#fff';
+  ctx.shadowColor = '#00ccff';
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.arc(markerX, H - 13, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Percentage text
+  ctx.fillStyle = 'rgba(200,230,255,0.7)';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(Math.floor(prog * 100) + '%', W - 22, H - 6);
+
+  // ---- Key indicators at bottom ----
+  drawKeyIndicators();
+
+  ctx.restore();
+}
+
+function drawKeyIndicators() {
+  const indicators = [
+    { key: 'ArrowLeft',  label: '←', x: VX - 120, color: '#ff6622' },
+    { key: 'ArrowDown',  label: '↓', x: VX - 40,  color: '#00ccff' },
+    { key: 'ArrowUp',    label: '↑', x: VX + 40,  color: '#44ff44' },
+    { key: 'ArrowRight', label: '→', x: VX + 120, color: '#ff6622' },
+  ];
+  const y = H - 50;
+  const size = 20;
+
+  ctx.save();
+  for (const ind of indicators) {
+    const flash = keyFlash[ind.key] || 0;
+    const alpha = 0.3 + flash * 0.7;
+
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = ind.color;
+    ctx.shadowColor = ind.color;
+    ctx.shadowBlur = flash * 15;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(ind.x - size, y - size, size * 2, size * 2, 5);
+    ctx.stroke();
+
+    if (flash > 0.1) {
+      ctx.fillStyle = ind.color;
+      ctx.globalAlpha = flash * 0.25;
+      ctx.fill();
+    }
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#fff';
+    ctx.shadowBlur = 0;
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ind.label, ind.x, y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function drawAccuracyGauge(cx, cy, r) {
+  ctx.save();
+  const startAngle = -Math.PI * 0.75;
+  const endAngle = Math.PI * 0.75;
+  const totalArc = endAngle - startAngle;
+
+  ctx.strokeStyle = 'rgba(40,50,80,0.6)';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, startAngle, endAngle);
+  ctx.stroke();
+
+  const frac = accuracy / 100;
+  const col = frac > 0.9 ? '#44ff88' : frac > 0.7 ? '#ffcc00' : '#ff4444';
+  ctx.strokeStyle = col;
+  ctx.shadowColor = col;
+  ctx.shadowBlur = 8;
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, startAngle, startAngle + totalArc * frac);
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 14px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(accuracy.toFixed(1) + '%', cx, cy);
+
+  ctx.font = '9px sans-serif';
+  ctx.fillStyle = 'rgba(180,200,255,0.6)';
+  ctx.fillText('精度', cx, cy + 15);
+
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: Judgment Popup
+// ============================================================
+function drawJudgePopup() {
+  if (judgeTimer <= 0 || !lastJudge) return;
+
+  ctx.save();
+  const t = judgeTimer / 0.5;
+  const scale = 1 + (1 - t) * 0.3;
+  const alpha = Math.min(1, t * 2);
+
+  ctx.translate(120, H - 160);
+  ctx.scale(scale, scale);
+  ctx.globalAlpha = alpha;
+
+  ctx.shadowColor = JUDGE_COLORS[lastJudge];
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = JUDGE_COLORS[lastJudge];
+  ctx.font = "bold 34px 'Impact', sans-serif";
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(lastJudge, 0, 0);
+
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: READY/GO Animation
+// ============================================================
+function drawReadyGo() {
+  if (gameState !== 'READY_GO') return;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const elapsed = READY_GO_DUR - readyGoTimer;
+
+  if (elapsed < 1.5) {
+    // READY phase
+    const t = elapsed / 1.5;
+    const scale = 1.0 + Math.sin(t * Math.PI) * 0.15;
+    const alpha = t < 0.2 ? t / 0.2 : (t > 0.85 ? (1 - t) / 0.15 : 1.0);
+
+    ctx.translate(VX, H / 2 - 40);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.shadowColor = '#00ccff';
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = '#00ddff';
+    ctx.font = "bold 90px 'Impact', sans-serif";
+    ctx.fillText('READY', 0, 0);
+  } else {
+    // GO phase
+    const t = (elapsed - 1.5) / 1.0;
+    const scale = 1.2 + t * 0.8;
+    const alpha = t < 0.3 ? t / 0.3 : Math.max(0, 1 - (t - 0.3) * 1.5);
+
+    ctx.translate(VX, H / 2 - 40);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.shadowColor = '#ffcc00';
+    ctx.shadowBlur = 40;
+    ctx.fillStyle = '#ffee00';
+    ctx.font = "bold 120px 'Impact', sans-serif";
+    ctx.fillText('GO!', 0, 0);
+  }
+
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: Goal Line
+// ============================================================
+function drawGoalLine() {
+  if (goalLineZ < 0 || goalLineZ > 1.5) return;
+
+  const z = Math.min(1.0, goalLineZ);
+  const s = zToScreen(z);
+  const y = s.y;
+  const lx = roadEdgeX(z, -1);
+  const rx = roadEdgeX(z, 1);
+
+  ctx.save();
+  const alpha = Math.min(1, z * 2);
+  ctx.globalAlpha = alpha;
+
+  // Checkered finish line
+  const lineH = 12 * Math.max(0.3, s.t);
+  const numChecks = 16;
+  const checkW = (rx - lx) / numChecks;
+  for (let i = 0; i < numChecks; i++) {
+    ctx.fillStyle = (i % 2 === 0) ? '#fff' : '#111';
+    ctx.fillRect(lx + i * checkW, y - lineH, checkW, lineH);
+  }
+  // Second row offset
+  for (let i = 0; i < numChecks; i++) {
+    ctx.fillStyle = (i % 2 === 1) ? '#fff' : '#111';
+    ctx.fillRect(lx + i * checkW, y, checkW, lineH);
+  }
+
+  // "GOAL" text above
+  if (z > 0.3) {
+    const textScale = Math.max(0.5, s.t);
+    ctx.shadowColor = '#ffcc00';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#ffee00';
+    ctx.font = `bold ${Math.round(36 * textScale)}px 'Impact', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('GOAL', VX, y - lineH - 5 * textScale);
+  }
+
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: Screens
+// ============================================================
+function drawVolumeUI() {
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const volX = VX, volY = H - 22;
+  const barW = 120, barH = 8;
+  // Label
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = 'rgba(180,220,255,0.6)';
+  ctx.shadowBlur = 0;
+  ctx.fillText('音量  [ − / + ]', volX, volY - 14);
+  // Background bar
+  ctx.fillStyle = 'rgba(60,60,100,0.6)';
+  ctx.fillRect(volX - barW / 2, volY - barH / 2, barW, barH);
+  // Fill bar
+  const fillW = barW * gameVolume;
+  ctx.fillStyle = 'rgba(0,220,180,0.7)';
+  ctx.fillRect(volX - barW / 2, volY - barH / 2, fillW, barH);
+  // Border
+  ctx.strokeStyle = 'rgba(120,160,200,0.4)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(volX - barW / 2, volY - barH / 2, barW, barH);
+  // Percentage text
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.font = '11px sans-serif';
+  ctx.fillText(Math.round(gameVolume * 100) + '%', volX, volY + 12);
+  ctx.restore();
+}
+
+function drawStartScreen() {
+  const t = performance.now() / 1000;
+  const pulse = 0.7 + 0.3 * Math.sin(t * 3);
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Title
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur = 30 * pulse;
+  ctx.font = "bold 100px 'Impact', sans-serif";
+  ctx.fillStyle = 'rgba(0,255,200,' + pulse + ')';
+  ctx.fillText('RRBe', VX, H / 2 - 130);
+
+  // Subtitle
+  ctx.shadowColor = '#8844ff';
+  ctx.shadowBlur = 15;
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillStyle = '#cc88ff';
+  ctx.fillText('RACE & RHYTHM BEAT', VX, H / 2 - 65);
+
+  // Controls
+  ctx.shadowBlur = 0;
+  ctx.font = '15px sans-serif';
+  ctx.fillStyle = 'rgba(150,220,255,0.85)';
+  const lines = [
+    '障害物がリズムに合わせて迫ってくる — タイミングよく避けよう！',
+    '',
+    '🚧 右のパイロン → ← を押して避ける',
+    '🚧 左のパイロン → → を押して避ける',
+    '🌉 アーチ（上） → ↓ を押してしゃがむ',
+    '🧱 ブロック（下） → ↑ を押してジャンプ',
+    '⭐ 右のスター → → を押して取る',
+    '⭐ 左のスター → ← を押して取る',
+    '',
+    '判定: PERFECT → GREAT → NICE → BAD → MISS',
+  ];
+  lines.forEach(function(l, i) { ctx.fillText(l, VX, H / 2 - 20 + i * 24); });
+
+  // Obstacle preview icons
+  const iconY = H / 2 + lines.length * 24;
+  const icons = [
+    { label: '←', color: '#ff6622' },
+    { label: '↓', color: '#00ccff' },
+    { label: '↑', color: '#44ff44' },
+    { label: '→', color: '#ff6622' },
+    { label: '★', color: '#ffdd00' },
+  ];
+  icons.forEach(function(ic, i) {
+    const x = VX - 120 + i * 60;
+    ctx.fillStyle = ic.color;
+    ctx.shadowColor = ic.color;
+    ctx.shadowBlur = 8;
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText(ic.label, x, iconY);
+  });
+  ctx.shadowBlur = 0;
+
+  // Press space
+  const sp = 0.5 + 0.5 * Math.sin(t * 4);
+  ctx.shadowColor = '#ffee00';
+  ctx.shadowBlur = 12 * sp;
+  ctx.fillStyle = 'rgba(255,238,0,' + sp + ')';
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillText('スペースキーでスタート', VX, H / 2 + 230);
+
+  ctx.restore();
+  drawVolumeUI();
+}
+
+function drawResultScreen() {
+  const t = performance.now() / 1000;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  ctx.fillStyle = 'rgba(0,0,10,0.75)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grade
+  var grade;
+  if (accuracy >= 95)      grade = 'S';
+  else if (accuracy >= 90) grade = 'A';
+  else if (accuracy >= 80) grade = 'B';
+  else if (accuracy >= 70) grade = 'C';
+  else if (accuracy >= 60) grade = 'D';
+  else                     grade = 'F';
+
+  const gradeColors = {
+    S: '#00ffff', A: '#44ff44', B: '#88cc00',
+    C: '#ffcc00', D: '#ff8800', F: '#ff2244'
+  };
+
+  const pulse = 0.8 + 0.2 * Math.sin(t * 3);
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur = 20 * pulse;
+  ctx.fillStyle = 'rgba(0,255,200,' + pulse + ')';
+  ctx.font = "bold 50px 'Impact', sans-serif";
+  ctx.fillText('ステージクリア！', VX, 80);
+
+  ctx.shadowColor = gradeColors[grade];
+  ctx.shadowBlur = 40;
+  ctx.fillStyle = gradeColors[grade];
+  ctx.font = "bold 120px 'Impact', sans-serif";
+  ctx.fillText(grade, VX, 200);
+
+  ctx.shadowBlur = 0;
+  ctx.font = 'bold 24px sans-serif';
+  ctx.fillStyle = '#00ddff';
+  ctx.fillText('スコア: ' + getDisplayScore(), VX, 300);
+
+  ctx.fillStyle = '#ffee44';
+  ctx.font = '20px sans-serif';
+  ctx.fillText('最大コンボ: ' + maxCombo, VX, 335);
+
+  ctx.fillStyle = '#fff';
+  ctx.fillText('精度: ' + accuracy.toFixed(2) + '%', VX, 365);
+
+  // ALL PERFECT display — luxurious golden rainbow effect
+  if (isAllPerfect()) {
+    const apPulse = 0.7 + 0.3 * Math.sin(t * 4);
+    const rainbowHue = (t * 60) % 360;
+    ctx.save();
+    // Outer glow
+    ctx.shadowColor = `hsl(${rainbowHue}, 100%, 70%)`;
+    ctx.shadowBlur = 50 * apPulse;
+    ctx.font = "bold 52px 'Impact', sans-serif";
+    // Rainbow gradient text
+    const apGrad = ctx.createLinearGradient(VX - 200, 0, VX + 200, 0);
+    apGrad.addColorStop(0, `hsl(${rainbowHue}, 100%, 70%)`);
+    apGrad.addColorStop(0.25, `hsl(${(rainbowHue + 60) % 360}, 100%, 70%)`);
+    apGrad.addColorStop(0.5, `hsl(${(rainbowHue + 120) % 360}, 100%, 70%)`);
+    apGrad.addColorStop(0.75, `hsl(${(rainbowHue + 180) % 360}, 100%, 70%)`);
+    apGrad.addColorStop(1, `hsl(${(rainbowHue + 240) % 360}, 100%, 70%)`);
+    ctx.fillStyle = apGrad;
+    ctx.fillText('✨ ALL PERFECT ✨', VX, 265);
+    // Second line with sparkle
+    ctx.font = "bold 28px 'Impact', sans-serif";
+    ctx.shadowBlur = 30 * apPulse;
+    ctx.fillStyle = `rgba(255,215,0,${apPulse})`;
+    ctx.fillText('🏆 1,000,000 pts 🏆', VX, 258 + 42);
+    ctx.restore();
+  }
+  // Full Combo display (NICE or better, not All Perfect)
+  else if (isFullCombo()) {
+    const acPulse = 0.7 + 0.3 * Math.sin(t * 5);
+    ctx.save();
+    ctx.shadowColor = '#ff44ff';
+    ctx.shadowBlur = 30 * acPulse;
+    ctx.fillStyle = `rgba(255,100,255,${acPulse})`;
+    ctx.font = "bold 44px 'Impact', sans-serif";
+    ctx.fillText('✨ フルコンボ ✨', VX, 270);
+    ctx.restore();
+  }
+
+  // Judgment breakdown
+  const resultStats = [
+    ['PERFECT', judgeCounts.PERFECT, JUDGE_COLORS.PERFECT],
+    ['GREAT',   judgeCounts.GREAT,   JUDGE_COLORS.GREAT],
+    ['NICE',    judgeCounts.NICE,    JUDGE_COLORS.NICE],
+    ['BAD',     judgeCounts.BAD,     JUDGE_COLORS.BAD],
+    ['MISS',    judgeCounts.MISS,    JUDGE_COLORS.MISS],
+  ];
+  ctx.font = '16px sans-serif';
+  const statsY = 410;
+  const total = obstacles.length;
+  resultStats.forEach(function(entry, idx) {
+    const x = VX - 200 + idx * 100;
+    ctx.fillStyle = entry[2];
+    ctx.fillText(entry[0], x, statsY);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(String(entry[1]), x, statsY + 22);
+    const barW = 60;
+    const barH = 4;
+    const frac = total > 0 ? entry[1] / total : 0;
+    ctx.fillStyle = 'rgba(40,40,80,0.6)';
+    ctx.fillRect(x - barW / 2, statsY + 32, barW, barH);
+    ctx.fillStyle = entry[2];
+    ctx.fillRect(x - barW / 2, statsY + 32, barW * frac, barH);
+  });
+
+  const rp = 0.5 + 0.5 * Math.sin(t * 3.5);
+  ctx.shadowColor = '#ffee00';
+  ctx.shadowBlur = 10 * rp;
+  ctx.fillStyle = 'rgba(255,238,0,' + rp + ')';
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText('R または スペースでリスタート', VX, H - 60);
+
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: Settings Screen
+// ============================================================
+function drawSettingsScreen() {
+  const t = performance.now() / 1000;
+  const pulse = 0.7 + 0.3 * Math.sin(t * 3);
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Title
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur = 20 * pulse;
+  ctx.font = "bold 60px 'Impact', sans-serif";
+  ctx.fillStyle = `rgba(0,255,200,${pulse})`;
+  ctx.fillText('設定', VX, 70);
+
+  ctx.shadowBlur = 0;
+
+  // --- Volume (item 0) ---
+  const volY = 190;
+  const isVol = settingsSelection === 0;
+  ctx.fillStyle = isVol ? '#00ffcc' : 'rgba(150,200,255,0.6)';
+  ctx.font = isVol ? 'bold 22px sans-serif' : '20px sans-serif';
+  ctx.fillText('🔊 音量', VX, volY);
+
+  // Volume bar
+  const barW = 200, barH = 12;
+  const barX = VX - barW / 2, barY = volY + 20;
+  ctx.fillStyle = 'rgba(40,40,80,0.7)';
+  ctx.fillRect(barX, barY, barW, barH);
+  ctx.fillStyle = isVol ? '#00ddcc' : 'rgba(0,180,160,0.5)';
+  ctx.fillRect(barX, barY, barW * gameVolume, barH);
+  ctx.strokeStyle = isVol ? '#00ffcc' : 'rgba(100,150,200,0.4)';
+  ctx.lineWidth = isVol ? 2 : 1;
+  ctx.strokeRect(barX, barY, barW, barH);
+  ctx.fillStyle = '#fff';
+  ctx.font = '14px sans-serif';
+  ctx.fillText(Math.round(gameVolume * 100) + '%', VX, volY + 50);
+  if (isVol) {
+    ctx.fillStyle = 'rgba(0,255,200,0.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('← → で調整', VX, volY + 68);
+  }
+
+  // --- Scroll Speed (item 1) ---
+  const spdY = 280;
+  const isSpd = settingsSelection === 1;
+  ctx.fillStyle = isSpd ? '#00ffcc' : 'rgba(150,200,255,0.6)';
+  ctx.font = isSpd ? 'bold 22px sans-serif' : '20px sans-serif';
+  ctx.fillText('⚡ スクロール速度', VX, spdY);
+
+  // Speed bar
+  const sBarW = 200, sBarH = 12;
+  const sBarX = VX - sBarW / 2, sBarY = spdY + 20;
+  const spdFrac = (scrollSpeedMult - SCROLL_SPEED_MIN) / (SCROLL_SPEED_MAX - SCROLL_SPEED_MIN);
+  ctx.fillStyle = 'rgba(40,40,80,0.7)';
+  ctx.fillRect(sBarX, sBarY, sBarW, sBarH);
+  ctx.fillStyle = isSpd ? '#00ddcc' : 'rgba(0,180,160,0.5)';
+  ctx.fillRect(sBarX, sBarY, sBarW * spdFrac, sBarH);
+  ctx.strokeStyle = isSpd ? '#00ffcc' : 'rgba(100,150,200,0.4)';
+  ctx.lineWidth = isSpd ? 2 : 1;
+  ctx.strokeRect(sBarX, sBarY, sBarW, sBarH);
+  ctx.fillStyle = '#fff';
+  ctx.font = '14px sans-serif';
+  ctx.fillText(scrollSpeedMult.toFixed(1) + 'x', VX, spdY + 50);
+  if (isSpd) {
+    ctx.fillStyle = 'rgba(0,255,200,0.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('← → で調整（速い＝間隔が広い）', VX, spdY + 68);
+  }
+
+  // --- Avatar Drop Zone (item 2) ---
+  const avatarY = 380;
+  const isAvatar = settingsSelection === 2;
+  ctx.fillStyle = isAvatar ? '#ff88cc' : 'rgba(200,150,255,0.6)';
+  ctx.font = isAvatar ? 'bold 22px sans-serif' : '20px sans-serif';
+  ctx.fillText('🎨 アバター変更', VX, avatarY);
+
+  // Drop zone
+  const dropW = 300, dropH = 100;
+  const dropX = VX - dropW / 2, dropY = avatarY + 20;
+
+  if (avatarDropHover) {
+    ctx.save();
+    ctx.strokeStyle = '#ff88cc';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([10, 6]);
+    ctx.beginPath();
+    ctx.roundRect(dropX, dropY, dropW, dropH, 12);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,136,204,0.15)';
+    ctx.fill();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ff88cc';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('🖼️ 画像をここにドロップ！', VX, avatarY + 70);
+    ctx.restore();
+  } else {
+    ctx.strokeStyle = isAvatar ? '#ff88cc' : 'rgba(150,100,200,0.4)';
+    ctx.lineWidth = isAvatar ? 2 : 1;
+    ctx.setLineDash([8, 5]);
+    ctx.beginPath();
+    ctx.roundRect(dropX, dropY, dropW, dropH, 12);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = isAvatar ? 'rgba(255,200,230,0.8)' : 'rgba(180,150,220,0.5)';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('マイクラスキン画像をドラッグ＆ドロップ', VX, avatarY + 55);
+    ctx.fillStyle = isAvatar ? 'rgba(255,180,220,0.6)' : 'rgba(150,130,200,0.4)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('64x64 or 64x32 のスキンPNG', VX, avatarY + 80);
+  }
+
+  // Current avatar status
+  const statusY = avatarY + 130;
+  if (avatarCustom) {
+    ctx.fillStyle = '#ff88cc';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('✨ カスタムスキン適用中！', VX, statusY);
+    // Draw a mini skin face preview
+    const sk = getActiveSkin();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(sk, 8, 8, 8, 8, VX - 16, statusY + 8, 32, 32);
+    ctx.imageSmoothingEnabled = true;
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(VX - 16, statusY + 8, 32, 32);
+  } else {
+    ctx.fillStyle = 'rgba(150,200,255,0.5)';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('デフォルトアバター', VX, statusY);
+  }
+
+  // Avatar loading message
+  if (avatarLoadingMsg) {
+    ctx.fillStyle = '#ff88cc';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(avatarLoadingMsg, VX, statusY + 30);
+  }
+
+  // --- Reset Avatar (item 3) ---
+  const resetY = 620;
+  const isReset = settingsSelection === 3;
+  if (isReset) {
+    ctx.shadowColor = '#ff4444';
+    ctx.shadowBlur = 10;
+  }
+  ctx.fillStyle = isReset ? '#ff6644' : 'rgba(200,100,100,0.5)';
+  ctx.font = isReset ? 'bold 20px sans-serif' : '18px sans-serif';
+  ctx.fillText('🔄 スキンを初期化', VX, resetY);
+  ctx.shadowBlur = 0;
+  if (isReset) {
+    ctx.fillStyle = 'rgba(255,100,80,0.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('スペースで初期化', VX, resetY + 22);
+  }
+
+  // --- Back (item 4) ---
+  const backY = 690;
+  const isBack = settingsSelection === 4;
+  if (isBack) {
+    ctx.shadowColor = '#ffee00';
+    ctx.shadowBlur = 10;
+  }
+  ctx.fillStyle = isBack ? '#ffee00' : 'rgba(200,200,100,0.5)';
+  ctx.font = isBack ? 'bold 20px sans-serif' : '18px sans-serif';
+  ctx.fillText('← 曲選択に戻る', VX, backY);
+  ctx.shadowBlur = 0;
+  if (isBack) {
+    ctx.fillStyle = 'rgba(255,238,0,0.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('スペースまたはESC', VX, backY + 22);
+  }
+
+  // Navigation hint
+  ctx.fillStyle = 'rgba(150,200,255,0.4)';
+  ctx.font = '12px sans-serif';
+  ctx.fillText('↑ ↓ で移動 ｜ スペースで決定 ｜ ESCで戻る', VX, H - 20);
+
+  // Draw avatar preview on the right — Minecraft style
+  ctx.save();
+  ctx.translate(W - 120, 420);
+  const sk = getActiveSkin();
+  ctx.imageSmoothingEnabled = false;
+  // Head (8,8 → 16,16) scaled to 48x48
+  ctx.drawImage(sk, 8, 8, 8, 8, -24, -60, 48, 48);
+  // Body (20,20 → 28,32) scaled to 28x42
+  ctx.drawImage(sk, 20, 20, 8, 12, -14, -12, 28, 42);
+  // Right arm (44,20 → 48,32) scaled to 14x42
+  ctx.drawImage(sk, 44, 20, 4, 12, -28, -12, 14, 42);
+  // Left arm (36,52 → 40,64) scaled to 14x42
+  ctx.drawImage(sk, 36, 52, 4, 12, 14, -12, 14, 42);
+  // Right leg (4,20 → 8,32) scaled to 14x42
+  ctx.drawImage(sk, 4, 20, 4, 12, -14, 30, 14, 42);
+  // Left leg (20,52 → 24,64) scaled to 14x42
+  ctx.drawImage(sk, 20, 52, 4, 12, 0, 30, 14, 42);
+  ctx.imageSmoothingEnabled = true;
+  // Label
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('プレビュー', 0, 90);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+// ============================================================
+// RENDERING: Song Select Screen
+// ============================================================
+function drawSongSelectScreen() {
+  const t = performance.now() / 1000;
+  const pulse = 0.7 + 0.3 * Math.sin(t * 3);
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Title
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur = 30 * pulse;
+  ctx.font = "bold 80px 'Impact', sans-serif";
+  ctx.fillStyle = `rgba(0,255,200,${pulse})`;
+  ctx.fillText('RRBe', VX, 80);
+
+  ctx.shadowColor = '#8844ff';
+  ctx.shadowBlur = 15;
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillStyle = '#cc88ff';
+  ctx.fillText('RACE & RHYTHM BEAT', VX, 130);
+
+  // Select label
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.fillText('曲を選んでください', VX, 200);
+
+  // Song cards
+  for (let i = 0; i < SONGS.length; i++) {
+    const song = SONGS[i];
+    const isSelected = i === songSelectIndex;
+    const cardSpacing = SONGS.length <= 3 ? 180 : 150;
+    const totalW = (SONGS.length - 1) * cardSpacing;
+    const cardX = VX - totalW / 2 + i * cardSpacing;
+    const cardY = 340;
+    const cardW = SONGS.length <= 3 ? 150 : 130;
+    const cardH = 180;
+
+    // Card background
+    ctx.save();
+    if (isSelected) {
+      const sp = 0.6 + 0.4 * Math.sin(t * 4);
+      ctx.shadowColor = song.color;
+      ctx.shadowBlur = 20 * sp;
+      ctx.strokeStyle = song.color;
+      ctx.lineWidth = 3;
+      ctx.fillStyle = 'rgba(20,20,60,0.9)';
+    } else {
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(100,100,150,0.5)';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = 'rgba(10,10,30,0.7)';
+    }
+
+    ctx.beginPath();
+    ctx.roundRect(cardX - cardW / 2, cardY - cardH / 2, cardW, cardH, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    // BPM number (big)
+    ctx.save();
+    ctx.fillStyle = isSelected ? song.color : 'rgba(150,150,200,0.6)';
+    ctx.font = "bold 48px 'Impact', sans-serif";
+    ctx.shadowColor = isSelected ? song.color : 'transparent';
+    ctx.shadowBlur = isSelected ? 10 : 0;
+    ctx.fillText(String(song.bpm), cardX, cardY - 30);
+    ctx.restore();
+
+    // BPM label
+    ctx.fillStyle = isSelected ? '#fff' : 'rgba(150,150,200,0.5)';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('BPM', cardX, cardY + 10);
+
+    // Song name
+    ctx.fillStyle = isSelected ? '#fff' : 'rgba(150,150,200,0.5)';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(song.name, cardX, cardY + 40);
+
+    // Difficulty description
+    ctx.fillStyle = isSelected ? song.color : 'rgba(150,150,200,0.4)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(song.desc, cardX, cardY + 60);
+  }
+
+  // Navigation hint
+  ctx.fillStyle = 'rgba(150,220,255,0.6)';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('← → で選択、スペースで決定', VX, 490);
+
+  // Difficulty selector for custom songs
+  if (songSelectIndex >= 4 && customAudioBuffer) {
+    const diffY = 516;
+    ctx.fillStyle = '#00ff88';
+    ctx.font = 'bold 16px sans-serif';
+    const diffLabel = customDifficulty === 'EXPERT' ? '💀 エキスパート（24分音符）' : customDifficulty === 'HARD' ? '🔥 ハード（16分音符）' : '🎵 ノーマル';
+    ctx.fillText('難易度: ' + diffLabel, VX, diffY);
+    ctx.fillStyle = 'rgba(0,255,136,0.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('Dキーで難易度変更 ／ Bキーで BPM調整', VX, diffY + 18);
+  }
+
+  // Controls reminder
+  ctx.shadowBlur = 0;
+  ctx.font = '13px sans-serif';
+  ctx.fillStyle = 'rgba(150,220,255,0.65)';
+  const lines = [
+    '🚧 右パイロン → ← を押す    🚧 左パイロン → → を押す',
+    '🌉 アーチ → ↓ を押す            🧱 ブロック → ↑ を押す',
+    '⭐ 右スター → → を押す     ⭐ 左スター → ← を押す',
+  ];
+  lines.forEach(function(l, idx) { ctx.fillText(l, VX, 560 + idx * 22); });
+
+   // Press space
+  const sp = 0.5 + 0.5 * Math.sin(t * 4);
+  ctx.shadowColor = '#ffee00';
+  ctx.shadowBlur = 12 * sp;
+  ctx.fillStyle = `rgba(255,238,0,${sp})`;
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText('スペースキーでスタート', VX, H - 60);
+
+  // Settings link
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(200,180,255,0.6)';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('⚙ Sキーで設定（音量・アバター）', VX, H - 38);
+
+  // MP3 drop zone indicator
+  ctx.shadowBlur = 0;
+  if (mp3DropZoneHover) {
+    ctx.save();
+    ctx.strokeStyle = '#00ff88';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([10, 6]);
+    ctx.beginPath();
+    ctx.roundRect(VX - 200, 150, 400, 300, 15);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(0,255,136,0.15)';
+    ctx.fill();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#00ff88';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText('🎵 MP3をここにドロップ！', VX, 310);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = 'rgba(0,255,136,0.4)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('🎵 MP3ファイルをドラッグ＆ドロップで追加', VX, 636);
+  }
+
+  // MP3 loading message
+  if (mp3LoadingMsg) {
+    ctx.fillStyle = '#00ff88';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(mp3LoadingMsg, VX, 670);
+  }
+
+  ctx.restore();
+}
+
+// ============================================================
+// MAIN DRAW
+// ============================================================
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawBg();
+
+  if (gameState === 'SETTINGS') {
+    drawTrack();
+    drawCharacter();
+    drawSettingsScreen();
+    return;
+  }
+
+  if (gameState === 'SONG_SELECT') {
+    drawTrack();
+    drawCharacter();
+    drawSongSelectScreen();
+    return;
+  }
+
+  if (gameState === 'START') {
+    drawTrack();
+    drawJudgeZone();
+    drawCharacter();
+    drawStartScreen();
+    return;
+  }
+
+  if (gameState === 'READY_GO') {
+    drawTrack();
+    drawObstacles();
+    drawJudgeZone();
+    drawCharacter();
+    drawReadyGo();
+    return;
+  }
+
+  drawTrack();
+  drawGoalLine();
+  drawObstacles();
+  drawJudgeZone();
+  drawRhythmBalls();
+  drawCharacter();
+  drawPart();
+  drawHUD();
+  drawJudgePopup();
+
+  if (gameState === 'RESULT') drawResultScreen();
+}
+
+// ============================================================
+// GAME LIFECYCLE
+// ============================================================
+function resetGame() {
+  gameState = 'READY_GO';
+  readyGoTimer = READY_GO_DUR;
+  goalLineZ = -1;
+  goalReached = false;
+  celebrationTimer = 0;
+
+  // Use beat-detected chart for custom MP3, normal generator otherwise
+  if (isCustomSong && customSongBeats) {
+    obstacles = generateChartFromBeats(customSongBeats, BPM, SONG_DURATION, customDifficulty);
+  } else {
+    obstacles = generateChart();
+  }
+
+  score = 0; combo = 0; maxCombo = 0; comboPopTimer = 0;
+  judgeCounts = { PERFECT: 0, GREAT: 0, NICE: 0, BAD: 0, MISS: 0 };
+  accuracy = 100;
+  lastJudge = null; judgeTimer = 0;
+  beatFlash = 0;
+  particles = [];
+  rhythmBallFlashes = [];
+  roadScroll = 0; charPhase = 0;
+  charAction = 'RUN'; charActionTimer = 0; charJumpY = 0;
+  keyFlash = { ArrowLeft: 0, ArrowRight: 0, ArrowDown: 0, ArrowUp: 0 };
+
+  if (audioCtx) {
+    stepCount = 0; beatCount = 0; melodyPos = 0;
+    gameStartTime = -1; // will be set when READY_GO finishes
+    nextStepTime = 0;
+  }
+
+  // Custom audio will be started when READY_GO finishes (transition to PLAYING)
+}
+
+function selectSong(idx) {
+  selectedSong = idx;
+  const song = SONGS[idx];
+  BPM = song.bpm;
+  BEAT_S = 60 / BPM;
+  STEP_S = BEAT_S / 4;
+  SONG_BARS = song.bars;
+  SONG_DURATION = SONG_BARS * 4 * BEAT_S;
+  isCustomSong = (idx >= 4 && customAudioBuffer !== null);
+  if (!isCustomSong) {
+    curSongData = SONG_DATA[idx];
+  } else {
+    // For custom songs, use actual audio duration
+    SONG_DURATION = customAudioBuffer.duration;
+    curSongData = SONG_DATA[0]; // placeholder (synth won't play)
+  }
+  gameState = 'START';
+}
+
+function startGame() {
+  initAudio();
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  resetGame();
+}
+
+function resetToStart() {
+  stopCustomAudio();
+  gameState = 'SONG_SELECT';
+}
+
+// ============================================================
+// GAME LOOP
+// ============================================================
+lastTime = performance.now();
+
+function gameLoop(ts) {
+  dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+
+  update(dt);
+  draw();
+
+  for (const k in justPressed) delete justPressed[k];
+  requestAnimationFrame(gameLoop);
+}
+
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
