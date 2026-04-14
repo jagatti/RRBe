@@ -204,6 +204,7 @@ let mp3DropZoneHover = false;   // drag hover visual feedback
 let mp3LoadingMsg = '';         // loading status text
 let customDifficulty = 'NORMAL'; // 'NORMAL', 'HARD', or 'EXPERT' for custom MP3 songs
 let customDetectedBPM = null;   // auto-detected BPM (kept for display even after user override)
+let customStartOffset = 0;     // user-specified first obstacle timing offset (seconds)
 
 
 
@@ -646,12 +647,14 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
 
   // ---- Beat quantization: snap onsets to nearest musical grid position ----
   // This aligns obstacle placement with the actual beat grid for better musical feel
+  // When customStartOffset is set, the grid is anchored at that offset
   const quantizedBeats = [];
   const gridSize = beatS / 8; // 32nd note grid
+  const gridAnchor = customStartOffset || 0; // anchor the grid at the user-specified start offset
   for (let bi = 0; bi < beats.length; bi++) {
     const t = beats[bi];
-    // Snap to nearest grid position
-    const gridPos = Math.round(t / gridSize) * gridSize;
+    // Snap to nearest grid position relative to the anchor
+    const gridPos = gridAnchor + Math.round((t - gridAnchor) / gridSize) * gridSize;
     // Only add if not duplicate (within 20ms)
     if (quantizedBeats.length === 0 || Math.abs(gridPos - quantizedBeats[quantizedBeats.length - 1]._t) > 0.02) {
       quantizedBeats.push({
@@ -764,8 +767,8 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     return nearbyAmps[Math.floor(nearbyAmps.length * 0.25)] || 0.1;
   }
 
-  // Skip first CHART_START_OFFSET seconds, stop 2s before end
-  const startT = CHART_START_OFFSET;
+  // Skip obstacles before the start offset, stop 2s before end
+  const startT = customStartOffset > 0 ? customStartOffset : CHART_START_OFFSET;
   const endT = duration - 2.0;
   let lastType = -1;
   let lastTime = -1;
@@ -1029,6 +1032,7 @@ function handleMP3Drop(file) {
     mp3LoadingMsg = 'ビートを解析中...';
     audioCtx.decodeAudioData(e.target.result, function(buffer) {
       customAudioBuffer = buffer;
+      customStartOffset = 0; // reset start offset for new song
       const duration = buffer.duration;
       const beats = detectBeats(buffer);
       const bpm = estimateBPM(beats, duration);
@@ -1429,6 +1433,7 @@ function generateChart() {
   const obstacles = [];
   const bt = BEAT_S;
   const st = STEP_S; // 16th note duration
+  const difficulty = 'NORMAL'; // built-in songs always use NORMAL difficulty
 
   // Seeded pseudo-random for repeatable charts per song
   let seed = BPM * 1000 + SONG_BARS * 7;
@@ -1876,6 +1881,16 @@ window.addEventListener('keydown', (e) => {
         const newBPM = parseInt(input, 10);
         if (!isNaN(newBPM) && newBPM >= 30 && newBPM <= 300) {
           updateCustomBPM(newBPM);
+        }
+      }
+    }
+    // Start offset adjustment for custom songs
+    if (e.code === 'KeyT' && songSelectIndex >= 4 && customAudioBuffer) {
+      const input = prompt('最初の障害物の出現タイミングを秒数で入力してください（例: 0.500）', customStartOffset.toFixed(3));
+      if (input !== null) {
+        const val = parseFloat(input);
+        if (!isNaN(val) && val >= 0 && val < customAudioBuffer.duration) {
+          customStartOffset = val;
         }
       }
     }
@@ -3892,7 +3907,12 @@ function drawSongSelectScreen() {
     ctx.fillText('難易度: ' + diffLabel, VX, diffY);
     ctx.fillStyle = 'rgba(0,255,136,0.5)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('Dキーで難易度変更 ／ Bキーで BPM調整', VX, diffY + 18);
+    ctx.fillText('Dキーで難易度変更 ／ Bキーで BPM調整 ／ Tキーで開始タイミング', VX, diffY + 18);
+    if (customStartOffset > 0) {
+      ctx.fillStyle = '#ffcc00';
+      ctx.font = '12px sans-serif';
+      ctx.fillText('開始タイミング: ' + customStartOffset.toFixed(3) + '秒', VX, diffY + 34);
+    }
   }
 
   // Controls reminder
