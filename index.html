@@ -35,10 +35,10 @@ let SONG_DURATION = SONG_BARS * 4 * BEAT_S;
 
 // Perspective — low camera so obstacles appear to rush toward player
 const VX = W / 2;           // vanishing point X
-const VY = 180;              // vanishing point Y (higher = more "coming at you" feel)
-const ROAD_BOTTOM = 672;     // road bottom edge (near player)
-const ROAD_HW = 384;         // half-width of road at bottom
-const PERSP_POW = 1.5;
+const VY = 120;              // vanishing point Y — low for dramatic behind-character perspective
+const ROAD_BOTTOM = 700;     // road bottom edge (near player) — pushed down for immersion
+const ROAD_HW = 400;         // half-width of road at bottom — slightly wider for low-angle feel
+const PERSP_POW = 1.7;       // steeper perspective power — obstacles grow faster as they approach
 
 // Obstacle scroll
 const OBS_SCROLL_TIME = 1.0; // base seconds from spawn to judgment line (1.0 = 1.2x wider visual spacing)
@@ -53,8 +53,8 @@ const CHART_START_OFFSET = 0; // no offset: music and obstacles start together a
 const OBS_VIS_CUTOFF = -0.15;  // z value below which obstacles are hidden
 const OBS_FAR_ALPHA  = 0.08;   // opacity at the farthest visible distance (very thin hint)
 const OBS_FULL_ALPHA_Z = 0.50; // z at which obstacles reach full opacity
-const OBS_SCALE_MIN  = 0.15;  // scale at cutoff (far) — small for dramatic depth
-const OBS_SCALE_MAX  = 0.85;  // scale at z=1.0 (near) — large for impact
+const OBS_SCALE_MIN  = 0.12;  // scale at cutoff (far) — small for dramatic depth
+const OBS_SCALE_MAX  = 0.95;  // scale at z=1.0 (near) — large for low-angle impact
 const BURST_OBS_CUTOFF = 0.12; // burst mode: obstacles start here (overlay ≈70% opaque)
 const BURST_ALPHA_FAR  = 0.80; // burst mode: overlay opacity at z=0 (80% black)
 const BURST_ALPHA_NEAR = 0.35; // burst mode: overlay opacity at z=0.88 (35% black)
@@ -2813,8 +2813,8 @@ function drawCharacter() {
 
   // Character scale — Minecraft blocky style
   // Character total unscaled height ≈ 56px. Arch at foreground ≈ 161px.
-  // sc=2.6 → ~146px: slightly smaller than the arch.
-  const sc = 2.6;
+  // sc=2.8 → ~157px: low camera angle makes character more prominent.
+  const sc = 2.8;
   ctx.scale(sc, sc * scaleY);
 
   // Shadow on ground
