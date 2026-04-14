@@ -55,8 +55,9 @@ const OBS_FAR_ALPHA  = 0.08;   // opacity at the farthest visible distance (very
 const OBS_FULL_ALPHA_Z = 0.50; // z at which obstacles reach full opacity
 const OBS_SCALE_MIN  = 0.15;  // scale at cutoff (far) — small for dramatic depth
 const OBS_SCALE_MAX  = 0.85;  // scale at z=1.0 (near) — large for impact
-const BURST_OBS_CUTOFF = 0.12; // burst mode: obstacles start here (overlay ≈50% opaque)
-const BURST_ALPHA_FAR  = 0.75; // burst mode: overlay opacity at z=0 (75% black)
+const BURST_OBS_CUTOFF = 0.12; // burst mode: obstacles start here (overlay ≈70% opaque)
+const BURST_ALPHA_FAR  = 0.80; // burst mode: overlay opacity at z=0 (80% black)
+const BURST_ALPHA_NEAR = 0.35; // burst mode: overlay opacity at z=0.88 (35% black)
 
 // Timing windows (seconds)
 const T_PERFECT = 0.055;
@@ -2552,22 +2553,42 @@ function drawBurstOverlay() {
   if (!burstMode) return;
 
   // Smooth gradient overlay that blends into the lane surface.
-  // Instead of discrete zone blocks, draw many thin horizontal strips
-  // with alpha that transitions smoothly from far (dark) to near (transparent).
-  // Alpha curve: far(z=0)=0.75 → near(z=0.88)=0.0
+  // Alpha curve: far(z=0)=80% → near(z=0.88)=35%
+  // Uses concave curve (t^0.4) so midpoint is ~70%
 
   const STRIPS = 60; // many thin strips for seamless gradient
   const Z_FAR = 0.00;
   const Z_NEAR = 0.88;
 
   ctx.save();
+
+  // --- Arch-shaped cap at the far end to hide protruding arch tops ---
+  // Draw a dark arch shape above the vanishing point area
+  const capZ = 0.06; // z value for the cap bottom edge
+  const capS = zToScreen(capZ);
+  const capXR = roadEdgeX(capZ, 1);
+  const capXL = roadEdgeX(capZ, -1);
+  const archRise = 60; // how high above the cap the arch extends
+
+  ctx.beginPath();
+  ctx.moveTo(capXL, capS.y);
+  ctx.bezierCurveTo(
+    capXL, capS.y - archRise,
+    capXR, capS.y - archRise,
+    capXR, capS.y
+  );
+  ctx.closePath();
+  ctx.fillStyle = `rgba(0,0,0,${BURST_ALPHA_FAR.toFixed(3)})`;
+  ctx.fill();
+
+  // --- Gradient strips ---
   for (let i = 0; i < STRIPS; i++) {
     const z0 = Z_FAR + (Z_NEAR - Z_FAR) * (i / STRIPS);
     const z1 = Z_FAR + (Z_NEAR - Z_FAR) * ((i + 1) / STRIPS);
 
-    // Smooth alpha: quadratic ease-in from near(0) to far(0.75)
+    // Concave alpha: t^0.4 curve from near(35%) to far(80%)
     const t = 1.0 - (i + 0.5) / STRIPS; // 1.0 at far, 0.0 at near
-    const alpha = BURST_ALPHA_FAR * t * t; // quadratic: gentle near, strong far
+    const alpha = BURST_ALPHA_NEAR + (BURST_ALPHA_FAR - BURST_ALPHA_NEAR) * Math.pow(t, 0.4);
 
     if (alpha < 0.005) continue; // skip invisible strips
 
