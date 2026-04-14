@@ -1663,7 +1663,7 @@ let judgeCounts = { PERFECT: 0, GREAT: 0, NICE: 0, BAD: 0, MISS: 0 };
 let accuracy = 100;
 let lastJudge = null, judgeTimer = 0;
 let beatFlash = 0;
-let burstMode = false; // SUDDEN/バーストMode: obstacle opacity fades by 32nd-note distance from judgment line
+let burstMode = false; // SUDDEN/バーストMode: draws black overlays on far/mid zones to hide distant obstacles
 let dt = 0, lastTime = 0;
 let particles = [];
 let roadScroll = 0;
