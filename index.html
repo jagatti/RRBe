@@ -2465,9 +2465,6 @@ function drawObstacles() {
   }
   visible.sort((a, b) => a.z - b.z);
 
-  // Burst mode: calculate 32nd-note distance from judgment line for each obstacle
-  const burstNoteUnit = burstMode ? (60 / BPM) / 8 : 0; // 32nd note duration in seconds
-
   for (const { obs: o, z } of visible) {
     if (z < OBS_VIS_CUTOFF) continue;
 
@@ -2494,17 +2491,6 @@ function drawObstacles() {
     if (o.judged && o.judgment === 'MISS') {
       const fadeZ = z - 1.0;
       alpha = Math.max(0, 1 - fadeZ * 4) * 0.35;
-    }
-
-    // Burst mode opacity override for unjudged obstacles
-    if (burstMode && !o.judged && burstNoteUnit > 0) {
-      const timeDist = o.time - now; // seconds ahead of judgment line
-      const notesDist = timeDist / burstNoteUnit; // distance in 32nd notes
-      let burstAlpha;
-      if (notesDist <= 6) burstAlpha = 0.85;
-      else if (notesDist <= 12) burstAlpha = 0.50;
-      else burstAlpha = 0.30;
-      alpha = burstAlpha;
     }
 
     ctx.save();
@@ -2543,6 +2529,53 @@ function drawObstacles() {
 
     ctx.restore();
   }
+}
+
+// ============================================================
+// RENDERING: Burst Mode Lane Overlay
+// ============================================================
+// When burst mode is ON, draw semi-transparent black overlays
+// on the road surface in 3 zones (near/mid/far) to visually
+// darken distant obstacles, creating the SUDDEN effect.
+function drawBurstOverlay() {
+  if (!burstMode) return;
+
+  // 3 zones from near to far, each with increasing black opacity
+  // Zone boundaries in z-space (0=horizon, 1=judgment line)
+  const zones = [
+    { zStart: 0.00, zEnd: 0.33, alpha: 0.82 },  // far: very dark
+    { zStart: 0.33, zEnd: 0.66, alpha: 0.55 },  // mid: moderately dark
+    { zStart: 0.66, zEnd: 0.88, alpha: 0.25 },  // near: slight darkening
+  ];
+
+  const STEPS = 20; // subdivisions per zone for smooth curved shape
+
+  ctx.save();
+  for (const zone of zones) {
+    ctx.beginPath();
+
+    // Build right edge from zStart to zEnd (top-down)
+    for (let i = 0; i <= STEPS; i++) {
+      const z = zone.zStart + (zone.zEnd - zone.zStart) * (i / STEPS);
+      const s = zToScreen(z);
+      const x = roadEdgeX(z, 1);
+      if (i === 0) ctx.moveTo(x, s.y);
+      else ctx.lineTo(x, s.y);
+    }
+
+    // Build left edge from zEnd back to zStart (bottom-up)
+    for (let i = STEPS; i >= 0; i--) {
+      const z = zone.zStart + (zone.zEnd - zone.zStart) * (i / STEPS);
+      const s = zToScreen(z);
+      const x = roadEdgeX(z, -1);
+      ctx.lineTo(x, s.y);
+    }
+
+    ctx.closePath();
+    ctx.fillStyle = `rgba(0,0,0,${zone.alpha})`;
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawPylon(x, y, scale, color, isLeft) {
@@ -3883,6 +3916,7 @@ function draw() {
   drawTrack();
   drawGoalLine();
   drawObstacles();
+  drawBurstOverlay();
   drawJudgeZone();
   drawRhythmBalls();
   drawCharacter();
