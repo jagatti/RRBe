@@ -865,7 +865,7 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
       const baseStarChance = (section === 'before_last_chorus') ? 0.50
                        : (section === 'intro' || section === 'outro') ? 0.45
                        : 0.40;
-      const starChance = (difficulty === 'HARD' || difficulty === 'EXPERT') ? Math.min(baseStarChance, 0.15) : baseStarChance;
+      const starChance = (difficulty === 'HARD' || difficulty === 'EXPERT') ? Math.min(baseStarChance, 0.05) : baseStarChance;
       if (r < starChance / 2) typeIdx = 4;       // STAR_R
       else if (r < starChance) typeIdx = 5;       // STAR_L
       else if (r < starChance + 0.20) typeIdx = 0; // PYLON_R
@@ -1567,8 +1567,13 @@ function generateChart() {
     const config = sectionConfig(section);
     let starChance = config.starChance;
 
+    // Cap star chance for HARD/EXPERT modes to ~5%
+    if (difficulty === 'HARD' || difficulty === 'EXPERT') {
+      starChance = Math.min(starChance, 0.05);
+    }
+
     // Boost stars before last chorus (ラスサビ前)
-    if (isBeforeLastChorus(bar)) starChance = 0.45;
+    if (isBeforeLastChorus(bar)) starChance = (difficulty === 'HARD' || difficulty === 'EXPERT') ? 0.05 : 0.45;
 
     // Select step pattern based on section density
     let steps;
@@ -1595,7 +1600,7 @@ function generateChart() {
     // Add musical variation: occasional rest on every 8th bar for breathing room
     if (bar > 4 && bar % 8 === 0 && bar < SONG_BARS - 4 && !isChaos) {
       steps = easySteps;
-      starChance = 0.40; // rest bars get more stars
+      starChance = (difficulty === 'HARD' || difficulty === 'EXPERT') ? 0.05 : 0.40; // rest bars get more stars (capped for HARD/EXPERT)
     }
 
     // Build combined step list: 70% melody steps, 30% drum steps
@@ -2468,6 +2473,10 @@ function drawObstacles() {
   for (const { obs: o, z } of visible) {
     if (z < OBS_VIS_CUTOFF) continue;
 
+    // When burst mode is ON, hide obstacles beyond the overlay start (z < 0)
+    // to prevent the distracting appear-fade-appear cycle
+    if (burstMode && z < 0.0) continue;
+
     // Use road perspective mapping so obstacles move WITH the road surface
     const s = zToScreen(z);
     const y = s.y;
@@ -2540,39 +2549,42 @@ function drawObstacles() {
 function drawBurstOverlay() {
   if (!burstMode) return;
 
-  // 3 zones from near to far, each with increasing black opacity
-  // Zone boundaries in z-space (0=horizon, 1=judgment line)
-  const zones = [
-    { zStart: 0.00, zEnd: 0.33, alpha: 0.82 },  // far: very dark
-    { zStart: 0.33, zEnd: 0.66, alpha: 0.55 },  // mid: moderately dark
-    { zStart: 0.66, zEnd: 0.88, alpha: 0.25 },  // near: slight darkening
-  ];
+  // Smooth gradient overlay that blends into the lane surface.
+  // Instead of discrete zone blocks, draw many thin horizontal strips
+  // with alpha that transitions smoothly from far (dark) to near (transparent).
+  // Alpha curve: far(z=0)=0.65 → mid(z=0.33)=0.40 → near(z=0.88)=0.0
 
-  const STEPS = 20; // subdivisions per zone for smooth curved shape
+  const STRIPS = 60; // many thin strips for seamless gradient
+  const Z_FAR = 0.00;
+  const Z_NEAR = 0.88;
 
   ctx.save();
-  for (const zone of zones) {
+  for (let i = 0; i < STRIPS; i++) {
+    const z0 = Z_FAR + (Z_NEAR - Z_FAR) * (i / STRIPS);
+    const z1 = Z_FAR + (Z_NEAR - Z_FAR) * ((i + 1) / STRIPS);
+
+    // Smooth alpha: cubic ease-in from near(0) to far(0.65)
+    const t = 1.0 - (i + 0.5) / STRIPS; // 1.0 at far, 0.0 at near
+    const alpha = 0.65 * t * t; // quadratic: gentle near, strong far
+
+    if (alpha < 0.005) continue; // skip invisible strips
+
     ctx.beginPath();
 
-    // Build right edge from zStart to zEnd (top-down)
-    for (let i = 0; i <= STEPS; i++) {
-      const z = zone.zStart + (zone.zEnd - zone.zStart) * (i / STEPS);
-      const s = zToScreen(z);
-      const x = roadEdgeX(z, 1);
-      if (i === 0) ctx.moveTo(x, s.y);
-      else ctx.lineTo(x, s.y);
-    }
+    // Right edge top-down
+    const s0 = zToScreen(z0);
+    const s1 = zToScreen(z1);
+    const xR0 = roadEdgeX(z0, 1);
+    const xR1 = roadEdgeX(z1, 1);
+    const xL0 = roadEdgeX(z0, -1);
+    const xL1 = roadEdgeX(z1, -1);
 
-    // Build left edge from zEnd back to zStart (bottom-up)
-    for (let i = STEPS; i >= 0; i--) {
-      const z = zone.zStart + (zone.zEnd - zone.zStart) * (i / STEPS);
-      const s = zToScreen(z);
-      const x = roadEdgeX(z, -1);
-      ctx.lineTo(x, s.y);
-    }
-
+    ctx.moveTo(xR0, s0.y);
+    ctx.lineTo(xR1, s1.y);
+    ctx.lineTo(xL1, s1.y);
+    ctx.lineTo(xL0, s0.y);
     ctx.closePath();
-    ctx.fillStyle = `rgba(0,0,0,${zone.alpha})`;
+    ctx.fillStyle = `rgba(0,0,0,${alpha.toFixed(3)})`;
     ctx.fill();
   }
   ctx.restore();
