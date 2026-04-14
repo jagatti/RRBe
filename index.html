@@ -2465,26 +2465,8 @@ function drawObstacles() {
   }
   visible.sort((a, b) => a.z - b.z);
 
-  // Burst mode: build a rank map for unjudged obstacles (1 = closest to judgment line)
-  let burstRankMap = null;
-  if (burstMode) {
-    // Collect unjudged obstacles sorted by time ascending (closest to judgment = smallest positive time-now)
-    const unjudged = [];
-    for (const o of obstacles) {
-      if (!o.judged) unjudged.push(o);
-    }
-    unjudged.sort((a, b) => a.time - b.time);
-    // Find the first unjudged obstacle that hasn't passed yet (time >= now - tolerance)
-    let startIdx = 0;
-    for (let i = 0; i < unjudged.length; i++) {
-      if (unjudged[i].time >= now - 0.2) { startIdx = i; break; }
-      startIdx = i + 1;
-    }
-    burstRankMap = new Map();
-    for (let i = startIdx; i < unjudged.length; i++) {
-      burstRankMap.set(unjudged[i], i - startIdx + 1); // rank 1 = closest
-    }
-  }
+  // Burst mode: calculate 32nd-note distance from judgment line for each obstacle
+  const burstNoteUnit = burstMode ? (60 / BPM) / 8 : 0; // 32nd note duration in seconds
 
   for (const { obs: o, z } of visible) {
     if (z < OBS_VIS_CUTOFF) continue;
@@ -2515,17 +2497,14 @@ function drawObstacles() {
     }
 
     // Burst mode opacity override for unjudged obstacles
-    if (burstMode && !o.judged && burstRankMap) {
-      const rank = burstRankMap.get(o);
-      if (rank !== undefined) {
-        let burstAlpha;
-        if (rank <= 6) burstAlpha = 0.85;
-        else if (rank <= 12) burstAlpha = 0.50;
-        else burstAlpha = 0.30;
-        alpha = Math.min(alpha, burstAlpha);
-      } else {
-        alpha = 0.30;
-      }
+    if (burstMode && !o.judged && burstNoteUnit > 0) {
+      const timeDist = o.time - now; // seconds ahead of judgment line
+      const notesDist = timeDist / burstNoteUnit; // distance in 32nd notes
+      let burstAlpha;
+      if (notesDist <= 6) burstAlpha = 0.85;
+      else if (notesDist <= 12) burstAlpha = 0.50;
+      else burstAlpha = 0.30;
+      alpha = burstAlpha;
     }
 
     ctx.save();
