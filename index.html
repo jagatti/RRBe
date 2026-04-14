@@ -2473,9 +2473,9 @@ function drawObstacles() {
   for (const { obs: o, z } of visible) {
     if (z < OBS_VIS_CUTOFF) continue;
 
-    // When burst mode is ON, hide obstacles beyond the overlay start (z < 0)
-    // to prevent the distracting appear-fade-appear cycle
-    if (burstMode && z < 0.0) continue;
+    // When burst mode is ON, hide obstacles in the heavily-overlaid far zone
+    // so they only start rendering where the overlay is thin enough to reveal them
+    if (burstMode && z < 0.12) continue;
 
     // Use road perspective mapping so obstacles move WITH the road surface
     const s = zToScreen(z);
@@ -2552,7 +2552,7 @@ function drawBurstOverlay() {
   // Smooth gradient overlay that blends into the lane surface.
   // Instead of discrete zone blocks, draw many thin horizontal strips
   // with alpha that transitions smoothly from far (dark) to near (transparent).
-  // Alpha curve: far(z=0)=0.65 → mid(z=0.33)=0.40 → near(z=0.88)=0.0
+  // Alpha curve: far(z=0)=0.75 → near(z=0.88)=0.0
 
   const STRIPS = 60; // many thin strips for seamless gradient
   const Z_FAR = 0.00;
@@ -2563,9 +2563,9 @@ function drawBurstOverlay() {
     const z0 = Z_FAR + (Z_NEAR - Z_FAR) * (i / STRIPS);
     const z1 = Z_FAR + (Z_NEAR - Z_FAR) * ((i + 1) / STRIPS);
 
-    // Smooth alpha: cubic ease-in from near(0) to far(0.65)
+    // Smooth alpha: quadratic ease-in from near(0) to far(0.75)
     const t = 1.0 - (i + 0.5) / STRIPS; // 1.0 at far, 0.0 at near
-    const alpha = 0.65 * t * t; // quadratic: gentle near, strong far
+    const alpha = 0.75 * t * t; // quadratic: gentle near, strong far
 
     if (alpha < 0.005) continue; // skip invisible strips
 
