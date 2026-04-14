@@ -55,6 +55,8 @@ const OBS_FAR_ALPHA  = 0.08;   // opacity at the farthest visible distance (very
 const OBS_FULL_ALPHA_Z = 0.50; // z at which obstacles reach full opacity
 const OBS_SCALE_MIN  = 0.15;  // scale at cutoff (far) — small for dramatic depth
 const OBS_SCALE_MAX  = 0.85;  // scale at z=1.0 (near) — large for impact
+const BURST_OBS_CUTOFF = 0.12; // burst mode: obstacles start here (overlay ≈50% opaque)
+const BURST_ALPHA_FAR  = 0.75; // burst mode: overlay opacity at z=0 (75% black)
 
 // Timing windows (seconds)
 const T_PERFECT = 0.055;
@@ -2475,7 +2477,7 @@ function drawObstacles() {
 
     // When burst mode is ON, hide obstacles in the heavily-overlaid far zone
     // so they only start rendering where the overlay is thin enough to reveal them
-    if (burstMode && z < 0.12) continue;
+    if (burstMode && z < BURST_OBS_CUTOFF) continue;
 
     // Use road perspective mapping so obstacles move WITH the road surface
     const s = zToScreen(z);
@@ -2565,7 +2567,7 @@ function drawBurstOverlay() {
 
     // Smooth alpha: quadratic ease-in from near(0) to far(0.75)
     const t = 1.0 - (i + 0.5) / STRIPS; // 1.0 at far, 0.0 at near
-    const alpha = 0.75 * t * t; // quadratic: gentle near, strong far
+    const alpha = BURST_ALPHA_FAR * t * t; // quadratic: gentle near, strong far
 
     if (alpha < 0.005) continue; // skip invisible strips
 
