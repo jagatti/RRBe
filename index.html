@@ -35,10 +35,10 @@ let SONG_DURATION = SONG_BARS * 4 * BEAT_S;
 
 // Perspective — low camera so obstacles appear to rush toward player
 const VX = W / 2;           // vanishing point X
-const VY = 120;              // vanishing point Y — low for dramatic behind-character perspective
-const ROAD_BOTTOM = 700;     // road bottom edge (near player) — pushed down for immersion
+const VY = 140;              // vanishing point Y — lowered for behind-character perspective
+const ROAD_BOTTOM = 710;     // road bottom edge (near player) — pushed down for immersion
 const ROAD_HW = 400;         // half-width of road at bottom — slightly wider for low-angle feel
-const PERSP_POW = 1.7;       // steeper perspective power — obstacles grow faster as they approach
+const PERSP_POW = 1.5;       // perspective power — balanced depth without extreme compression
 
 // Obstacle scroll
 const OBS_SCROLL_TIME = 1.0; // base seconds from spawn to judgment line (1.0 = 1.2x wider visual spacing)
@@ -51,9 +51,9 @@ const CHART_START_OFFSET = 0; // no offset: music and obstacles start together a
 
 // Obstacle visibility
 const OBS_VIS_CUTOFF = -0.15;  // z value below which obstacles are hidden
-const OBS_FAR_ALPHA  = 0.08;   // opacity at the farthest visible distance (very thin hint)
-const OBS_FULL_ALPHA_Z = 0.50; // z at which obstacles reach full opacity
-const OBS_SCALE_MIN  = 0.12;  // scale at cutoff (far) — small for dramatic depth
+const OBS_FAR_ALPHA  = 0.10;   // opacity at the farthest visible distance
+const OBS_FULL_ALPHA_Z = 0.45; // z at which obstacles reach full opacity
+const OBS_SCALE_MIN  = 0.15;  // scale at cutoff (far) — visible hint of approaching obstacle
 const OBS_SCALE_MAX  = 0.95;  // scale at z=1.0 (near) — large for low-angle impact
 const BURST_OBS_CUTOFF = 0.12; // burst mode: obstacles start here (overlay ≈70% opaque)
 const BURST_ALPHA_FAR  = 0.80; // burst mode: overlay opacity at z=0 (80% black)
