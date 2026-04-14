@@ -914,6 +914,27 @@ function generateChartFromBeats(beats, bpm, duration, difficulty) {
     if (typeIdx === lastType) {
       typeIdx = (typeIdx + 1 + Math.floor(rand() * 4)) % 6;
     }
+
+    // Anti-tate-ren: avoid consecutive same-key-direction obstacles
+    // except in intense sections (~20% of song) and pylon↔star combos
+    const intense = isIntenseAt(t);
+    if (!intense && lastType >= 0) {
+      const curKey = OBS_KEYS[OBS_TYPES[typeIdx]];
+      const prevKey = OBS_KEYS[OBS_TYPES[lastType]];
+      if (curKey === prevKey) {
+        // Check if it's a pylon↔star combo (allowed)
+        const curT = OBS_TYPES[typeIdx];
+        const prevT = OBS_TYPES[lastType];
+        const isPylonStarCombo = (curT.startsWith('PYLON') && prevT.startsWith('STAR'))
+                             || (curT.startsWith('STAR') && prevT.startsWith('PYLON'));
+        if (!isPylonStarCombo) {
+          // Re-pick: choose a different direction
+          const dirs = [0, 1, 2, 3, 4, 5].filter(i => OBS_KEYS[OBS_TYPES[i]] !== curKey);
+          typeIdx = dirs[Math.floor(rand() * dirs.length)];
+        }
+      }
+    }
+
     lastType = typeIdx;
     lastTime = t;
     consecutiveCount++;
@@ -1633,10 +1654,32 @@ function generateChart() {
 
       let typeIdx = pickType(step, rand(), config.isCalm, starChance);
 
-      // Avoid 3+ consecutive same types
+      // Avoid same consecutive type
       if (typeIdx === lastType) {
         typeIdx = (typeIdx + 1 + Math.floor(rand() * 4)) % 6;
       }
+
+      // Anti-tate-ren: avoid consecutive same-key-direction obstacles
+      // except in intense sections (chorus / last_chorus ≈ 20% of song)
+      // and except pylon↔star combos on the same side
+      const isIntense = section === 'chorus' || section === 'last_chorus';
+      if (!isIntense && lastType >= 0) {
+        const curKey = OBS_KEYS[OBS_TYPES[typeIdx]];
+        const prevKey = OBS_KEYS[OBS_TYPES[lastType]];
+        if (curKey === prevKey) {
+          // Check if it's a pylon↔star combo (allowed)
+          const curT = OBS_TYPES[typeIdx];
+          const prevT = OBS_TYPES[lastType];
+          const isPylonStarCombo = (curT.startsWith('PYLON') && prevT.startsWith('STAR'))
+                               || (curT.startsWith('STAR') && prevT.startsWith('PYLON'));
+          if (!isPylonStarCombo) {
+            // Re-pick: choose a different direction
+            const dirs = [0, 1, 2, 3, 4, 5].filter(i => OBS_KEYS[OBS_TYPES[i]] !== curKey);
+            typeIdx = dirs[Math.floor(rand() * dirs.length)];
+          }
+        }
+      }
+
       lastType = typeIdx;
 
       obstacles.push({
