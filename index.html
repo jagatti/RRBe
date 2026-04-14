@@ -41,7 +41,7 @@ const ROAD_HW = 384;         // half-width of road at bottom
 const PERSP_POW = 1.5;
 
 // Obstacle scroll
-const OBS_SCROLL_TIME = 1.2; // base seconds from spawn to judgment line
+const OBS_SCROLL_TIME = 1.0; // base seconds from spawn to judgment line (1.0 = 1.2x wider visual spacing)
 const SCROLL_SPEED_MIN = 0.5;
 const SCROLL_SPEED_MAX = 2.0; // capped at 2.0x — speeds above this are humanly unreadable
 const SCROLL_SPEED_CLAMP = 0.8; // minimum multiplier floor to prevent overly tight spacing at low speeds
@@ -1208,11 +1208,42 @@ function handleAvatarDrop(file) {
   reader.readAsDataURL(file);
 }
 
-// Initialize default skin on startup
+// Initialize default skin on startup — loads jagatti.png (Minecraft skin)
 let defaultSkinCanvas = null;
+let defaultSkinLoading = false;
+let defaultSkinFallback = null; // cached procedural fallback
+const JAGATTI_SKIN_SRC = 'jagatti.png';
 function getDefaultSkin() {
-  if (!defaultSkinCanvas) defaultSkinCanvas = buildDefaultSkin();
-  return defaultSkinCanvas;
+  if (defaultSkinCanvas) return defaultSkinCanvas;
+  // Start async load of jagatti.png if not already loading
+  if (!defaultSkinLoading) {
+    defaultSkinLoading = true;
+    const img = new Image();
+    img.onload = function() {
+      const c = document.createElement('canvas');
+      c.width = 64; c.height = 64;
+      const g = c.getContext('2d');
+      g.imageSmoothingEnabled = false;
+      g.drawImage(img, 0, 0);
+      // If old format (64x32), mirror right arm/leg to left arm/leg
+      if (img.height === 32) {
+        g.save(); g.translate(48, 48); g.scale(-1, 1);
+        g.drawImage(img, 40, 16, 16, 16, 0, 0, 16, 16); g.restore();
+        g.save(); g.translate(32, 48); g.scale(-1, 1);
+        g.drawImage(img, 0, 16, 16, 16, 0, 0, 16, 16); g.restore();
+      }
+      defaultSkinCanvas = c;
+      skinHasHat = checkSkinHasHat(c);
+    };
+    img.onerror = function() {
+      // Fallback to procedural skin if image fails to load
+      defaultSkinCanvas = buildDefaultSkin();
+    };
+    img.src = JAGATTI_SKIN_SRC;
+  }
+  // Return cached procedural skin as temporary fallback while loading
+  if (!defaultSkinFallback) defaultSkinFallback = buildDefaultSkin();
+  return defaultSkinFallback;
 }
 // Check if skin hat overlay (40,8 → 48,16) has visible pixels
 function checkSkinHasHat(skinCanvas) {
